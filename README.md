@@ -16,3 +16,8 @@ uv sync
 # Instead of pip install <name>
 uv add <name>
 ```
+
+## Reproduce the results
+1. Run `download.ipynb` to download the dataset and save to CSV format.
+2. Run `preproc.ipynb` to clean the CSV file.
+3. `itensities.ipynb` conducts a T-test for a specific protein and drug.
