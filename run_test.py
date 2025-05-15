@@ -1,5 +1,4 @@
 import re
-from concurrent.futures import ProcessPoolExecutor, as_completed
 
 import pandas as pd
 import numpy as np
@@ -14,14 +13,54 @@ def get_drug_names(df: pd.DataFrame):
     """
     pattern = r"_dyn_#(?P<drug>[^ ]+) \d+nM"
     drugs = df.columns.to_series().str.extract(pattern)["drug"].dropna().unique()
-    return sorted(drugs)
+    return drugs
+
+
+def build_column_map(df: pd.DataFrame, drugs: np.ndarray):
+    """
+    Build a map from (drug, dose_label) or (drug, 'control') to lists of column names.
+    """
+    column_map = {}
+    cols = df.columns.to_series()
+    dose_pattern = re.compile(r" (\d+)nM")
+
+    for drug in drugs:
+        drug_cols = cols[cols.str.contains(f"_dyn_#{drug}")]
+        if drug_cols.empty:
+            continue
+
+        column_map[drug] = {}
+
+        # Control columns
+        ctrl_cols = drug_cols[drug_cols.str.contains("DMSO.Tech replicate")].index
+        if not ctrl_cols.empty:
+            column_map[drug]["control"] = ctrl_cols
+
+        # Treatment columns
+        treat_cols_series = drug_cols[drug_cols.str.contains("nM.Tech replicate")]
+        doses = sorted(
+            {
+                m.group(1)
+                for col in treat_cols_series.index
+                if (m := dose_pattern.search(col))
+            }
+        )
+        for dose in doses:
+            dose_cols = treat_cols_series[
+                treat_cols_series.str.contains(f" {dose}nM")
+            ].index
+            if not dose_cols.empty:
+                column_map[drug][dose] = dose_cols
+
+    return column_map
 
 
 def filter_protein_df(df: pd.DataFrame, protein: str):
     """
     Return rows of the DataFrame where the "Proteins" column contains the given protein.
     """
-    mask_single = df["Proteins"].str.count(";") == 0  # TODO: check if we need this
+    # TODO: Check if this is needed
+    # mask_single = df["Proteins"].str.count(";") == 0
     mask_protein = df["Proteins"].str.contains(protein)
     return df[mask_protein]
 
@@ -38,30 +77,19 @@ def collect_log_intensities(df: pd.DataFrame, cols: pd.Index) -> np.ndarray:
     )
 
 
-def build_intensities(df: pd.DataFrame, drug: str):
+def build_intensities(df: pd.DataFrame, drug: str, column_map: dict):
     """
     For a single peptide-DF and drug:
       - control_log: log‐intensities for DMSO.Tech replicate columns
       - dose_logs: dict mapping each dose label → log‐intensities
+    Uses the pre-calculated column_map to get column names.
     """
-    cols = df.columns.to_series()
-    base = cols.str.contains("_dyn_") & cols.str.contains(drug)
-
-    ctrl_cols = cols[base & cols.str.contains("DMSO.Tech replicate")].index
-    treat_cols = cols[base & cols.str.contains("nM.Tech replicate")].index
-
-    dose_pattern = re.compile(rf"{drug} (\d+)nM")
-    doses = sorted(
-        {m.group(1) for col in treat_cols if (m := dose_pattern.search(col))}
-    )
-
-    control_log = collect_log_intensities(df, ctrl_cols)
-    dose_logs = {
-        dose: collect_log_intensities(
-            df, treat_cols[treat_cols.str.contains(f"{drug} {dose}nM")]
-        )
-        for dose in doses
-    }
+    drug_map = column_map[drug]
+    control_cols = drug_map["control"]
+    control_log = collect_log_intensities(df, control_cols)
+    dose_logs = {}
+    doses = sorted(d for d in drug_map if d != "control")
+    dose_logs = {dose: collect_log_intensities(df, drug_map[dose]) for dose in doses}
     return control_log, dose_logs
 
 
@@ -83,21 +111,30 @@ def run_t_test(
             nan_policy="raise",
             alternative="less",
         )
-        records.append(
-            {
-                "dose": dose,
-                "t_statistic": t_stat,
-                "p_value": p_val,
-                "significant": p_val < alpha,
-            }
-        )
+        if p_val != 0:
+            records.append(
+                {
+                    "dose": dose,
+                    "t_statistic": t_stat,
+                    "p_value": p_val,
+                    "significant": p_val < alpha,
+                }
+            )
+
+    if not records:
+        return None
 
     return (
         pd.DataFrame.from_records(records).sort_values("p_value").reset_index(drop=True)
     )
 
 
-def process_protein(protein: str, df: pd.DataFrame, drugs: list[str]):
+def process_protein(
+    protein: str,
+    df: pd.DataFrame,
+    drugs: np.ndarray,
+    column_map: dict,
+):
     """Run all drugs for one peptide, return DataFrame of t‐test results."""
     subdf = filter_protein_df(df, protein)
     if subdf.empty:
@@ -105,42 +142,42 @@ def process_protein(protein: str, df: pd.DataFrame, drugs: list[str]):
 
     rows = []
     for drug in drugs:
-        ctrl, doses = build_intensities(subdf, drug)
-        if ctrl.size == 0 or all(v.size == 0 for v in doses.values()):
-            continue
+        ctrl, doses = build_intensities(subdf, drug, column_map)
         tdf = run_t_test(ctrl, doses)
-        tdf["Peptide"] = protein
-        tdf["Drug"] = drug
-        rows.append(tdf)
+        if tdf:
+            tdf.insert(0, "protein", protein)
+            tdf.insert(1, "drug", drug)
+            rows.append(tdf)
 
-    return pd.concat(rows, ignore_index=True) if rows else None
+    if not rows:
+        return None
+
+    return pd.concat(rows, ignore_index=True)
 
 
 if __name__ == "__main__":
     data_path_csv = "data/mq_variants_intensity_cleaned.csv"
+    print(f"Reading data from {data_path_csv}...")
     df = pd.read_csv(data_path_csv)
+
     drugs = get_drug_names(df)
-    proteins = df["Proteins"].str.split(";").explode().unique()
+    proteins = df["Proteins"].str.split(";").explode().dropna().unique()
     print(f"Found {len(drugs)} drugs and {len(proteins)} proteins")
 
+    print("Building column map...")
+    column_map = build_column_map(df, drugs)
+
     all_results = []
+    for protein in tqdm(proteins, desc="Proteins"):
+        res = process_protein(protein, df, drugs, column_map)
+        if res and not res.empty:
+            all_results.append(res)
 
-    # # Single core processing
-    # for protein in tqdm(proteins, desc="Proteins"):
-    #     res = process_protein(protein, df, drugs)
-    #     if res is not None:
-    #         all_results.append(res)
-
-    # Multi‐core processing
-    with ProcessPoolExecutor() as ex:
-        futures = [ex.submit(process_protein, p, df, drugs) for p in proteins]
-        for fut in tqdm(as_completed(futures), total=len(futures), desc="Peptides"):
-            res = fut.result()
-            if res is not None:
-                all_results.append(res)
-
-    results = pd.concat(all_results, ignore_index=True)
-    sig = results[results["significant"]]
-    print(f"Performed {len(results)} tests; {len(sig)} significant")
-    print(sig.to_string(index=False))
-    sig.to_csv("data/significant_t_tests.csv", index=False)
+    print("Concatenating results...")
+    if all_results:
+        results = pd.concat(all_results, ignore_index=True)
+        sig = results[results["significant"]]
+        print(f"Collected {len(results)} tests; {len(sig)} significant")
+        sig.to_csv("data/significant_t_tests.csv", index=False)
+    else:
+        print("No significant results found or no valid data processed.")
