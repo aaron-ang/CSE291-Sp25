@@ -21,7 +21,8 @@ def filter_protein_df(df: pd.DataFrame, protein: str):
     """
     Return rows of the DataFrame where the "Proteins" column contains the given protein.
     """
-    mask_single = df["Proteins"].str.count(";") == 0  # TODO: check if we need this
+    # TODO: check if we need this
+    # mask_single = df["Proteins"].str.count(";") == 0
     mask_protein = df["Proteins"].str.contains(protein)
     return df[mask_protein]
 
@@ -76,21 +77,26 @@ def run_t_test(
     """
     records = []
     for dose, vals in dose_logs.items():
-        t_stat, p_val = stats.ttest_ind(
+        result = stats.ttest_ind(
             vals,
             control,
             equal_var=False,
             nan_policy="raise",
             alternative="less",
         )
-        records.append(
-            {
-                "dose": dose,
-                "t_statistic": t_stat,
-                "p_value": p_val,
-                "significant": p_val < alpha,
-            }
-        )
+        t_stat, p_val = result.statistic, result.pvalue
+        if p_val != 0:
+            records.append(
+                {
+                    "dose": dose,
+                    "t_statistic": t_stat,
+                    "p_value": p_val,
+                    "significant": p_val < alpha,
+                }
+            )
+
+    if not records:
+        return None
 
     return (
         pd.DataFrame.from_records(records).sort_values("p_value").reset_index(drop=True)
@@ -109,11 +115,15 @@ def process_protein(protein: str, df: pd.DataFrame, drugs: list[str]):
         if ctrl.size == 0 or all(v.size == 0 for v in doses.values()):
             continue
         tdf = run_t_test(ctrl, doses)
-        tdf["Peptide"] = protein
-        tdf["Drug"] = drug
-        rows.append(tdf)
+        if tdf is not None:
+            tdf.insert(0, "protein", protein)
+            tdf.insert(1, "drug", drug)
+            rows.append(tdf)
 
-    return pd.concat(rows, ignore_index=True) if rows else None
+    if not rows:
+        return None
+
+    return pd.concat(rows, ignore_index=True)
 
 
 if __name__ == "__main__":
@@ -142,5 +152,4 @@ if __name__ == "__main__":
     results = pd.concat(all_results, ignore_index=True)
     sig = results[results["significant"]]
     print(f"Performed {len(results)} tests; {len(sig)} significant")
-    print(sig.to_string(index=False))
     sig.to_csv("data/significant_t_tests.csv", index=False)
