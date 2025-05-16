@@ -27,5 +27,5 @@ uv remove <name>
 ## Reproduce the results
 1. Run `download.ipynb` to download the dataset and save to CSV format.
 2. Run `preproc.ipynb` to clean the CSV file.
-3. `run_test.ipynb` conducts a T-test for a specific protein and drug.
-4. `run_test.py` runs the T-test for all proteins and drugs in the dataset. It saves the results to a CSV file.
+3. `run_test.py` calculates all p-values of each peptide's relative intensity against the background variation distribution
+4. `run_protein_level.py` runs protein level analysis to see differences in the backgroun variation distribution and specific treated protein distribution
