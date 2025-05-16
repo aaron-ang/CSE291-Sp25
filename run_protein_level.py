@@ -34,98 +34,117 @@ def process_protein_data(df: pd.DataFrame):
     return df_frequent, frequent_proteins
 
 
-def analyze_drug(drug, df, intensities, protein, output_dir, min_samples=30):
-    """Analyze a single drug's distributions and create statistical results."""
-    # Get columns for this drug
-    cols = df.columns.to_series()
-    # Still limit to 5 concentrations
-    drug_cols = [col for col in cols if drug in col and "nM" in col][:5]
+def _compute_cohens_d(a: np.ndarray, b: np.ndarray, equal_var: bool = False) -> float:
+    """Compute Cohen’s d for two samples."""
+    na, nb = len(a), len(b)
+    var_a, var_b = a.var(ddof=1), b.var(ddof=1)
+    if equal_var:
+        pooled = ((na - 1) * var_a + (nb - 1) * var_b) / (na + nb - 2)
+        return (a.mean() - b.mean()) / np.sqrt(pooled) if pooled > 0 else 0.0
+    # Welch’s d
+    return (
+        (a.mean() - b.mean()) / np.sqrt(var_a / na + var_b / nb)
+        if (var_a > 0 and var_b > 0)
+        else 0.0
+    )
 
+
+def _interpret_effect(d: float) -> str:
+    ad = abs(d)
+    if ad < 0.2:
+        return "negligible"
+    if ad < 0.5:
+        return "small"
+    if ad < 0.8:
+        return "medium"
+    return "large"
+
+
+def analyze_drug(
+    drug: str,
+    df: pd.DataFrame,
+    intensities: list[float],
+    protein: str,
+    output_dir: str,
+    min_samples: int = 30,
+    max_concentrations: int = 5,
+    alpha: float = 0.05,
+    equal_var: bool = False,
+):
+    """
+    Compare the distribution of a drug’s intensities against the overall background.
+    """
+    # Validate inputs
+    intensities = np.asarray(intensities, dtype=float)
+    if intensities.size < min_samples:
+        print(
+            f"overall intensities ({intensities.size}) < min_samples ({min_samples}); skipping {drug}"
+        )
+        return None
+
+    # Select up to max_concentrations
+    drug_cols = [c for c in df.columns if drug in c and "nM" in c][:max_concentrations]
     if not drug_cols:
         return None
 
     # Create plot
     fig, ax = plt.subplots(figsize=(15, 8))
+    labels = []
     sns.kdeplot(
         intensities,
-        label=f"Overall Distribution (n={len(intensities)})",
-        linestyle="--",
         color="black",
+        linestyle="--",
         ax=ax,
     )
+    labels.append(f"Overall (n={len(intensities)})")
 
-    stat_results = []
-
+    rows = []
     for col in drug_cols:
-        col_values = df[col].dropna().values
-        if len(col_values) > 0:
-            # Calculate effect size
-            cohens_d = (np.mean(col_values) - np.mean(intensities)) / np.sqrt(
-                (
-                    (len(col_values) - 1) * np.var(col_values)
-                    + (len(intensities) - 1) * np.var(intensities)
-                )
-                / (len(col_values) + len(intensities) - 2)
-            )
+        vals = df[col].dropna().astype(float).values
+        n = len(vals)
+        if n == 0:
+            continue
 
-            # Perform t-test
-            t_stat, p_val = stats.ttest_ind(col_values, intensities, equal_var=False)
+        d = _compute_cohens_d(vals, intensities, equal_var=equal_var)
+        t_stat, p_val = stats.ttest_ind(vals, intensities, equal_var=equal_var)
+        effect = _interpret_effect(d)
+        enough = n >= min_samples
+        lbl = f"{col} (n={n}, {effect})" + ("" if enough else " [low n]")
 
-            # Interpret effect size
-            if abs(cohens_d) < 0.2:
-                effect = "negligible"
-            elif abs(cohens_d) < 0.5:
-                effect = "small"
-            elif abs(cohens_d) < 0.8:
-                effect = "medium"
-            else:
-                effect = "large"
+        sns.kdeplot(vals, ax=ax)
+        labels.append(lbl)
 
-            # Create label
-            enough_samples = len(col_values) >= min_samples
-            label = f"{col} (n={len(col_values)}, {effect} effect)"
-            if not enough_samples:
-                label += " [insufficient samples]"
+        rows.append(
+            {
+                "Drug": drug,
+                "Protein": protein,
+                "Column": col,
+                "Sample_Size": n,
+                "Enough_Samples": enough,
+                "Mean": vals.mean(),
+                "Std": vals.std(ddof=1),
+                "Cohens_d": d,
+                "Effect": effect,
+                "t_stat": t_stat,
+                "p_value": p_val,
+                "Significant": p_val < alpha,
+            }
+        )
 
-            # Plot distribution
-            ax_line = sns.kdeplot(col_values, ax=ax)
-            ax_line.set_label(label)
-
-            # Store results
-            stat_results.append(
-                {
-                    "Drug": drug,
-                    "Column": col,
-                    "Sample_Size": len(col_values),
-                    "Enough_Samples": enough_samples,
-                    "p-value": p_val,
-                    "Effect_Size": cohens_d,
-                    "Effect_Interpretation": effect,
-                    "Statistically_Significant": "Yes" if p_val < 0.05 else "No",
-                    "Mean": np.mean(col_values),
-                    "Std": np.std(col_values),
-                }
-            )
-
-    if not stat_results:
+    if not rows:
         plt.close(fig)
         return None
 
-    handles, labels = ax.get_legend_handles_labels()
-    ax.legend(handles, labels, loc="best")
-    ax.set_title(
-        f"Distribution Comparison for {protein} - {drug}\n"
-        f"Minimum sample size requirement: {min_samples}\n"
-        "Effect size interpretation: |d| < 0.2 negligible, 0.2 ≤ |d| < 0.5 small, "
-        "0.5 ≤ |d| < 0.8 medium, |d| ≥ 0.8 large"
-    )
+    ax.set_title(f"{protein} – {drug} (min n={min_samples}, α={alpha})")
     ax.set_xlabel("Intensity")
-
+    ax.legend(labels=labels, loc="best")
     fig.tight_layout()
-    plt.savefig(os.path.join(output_dir, f"distro_comparison_{drug}.png"))
+
+    out_path = os.path.join(output_dir, f"{protein}_{drug}_distribution.png")
+    fig.savefig(out_path)
     plt.close(fig)
 
-    return pd.DataFrame(stat_results)
+    return pd.DataFrame(rows)
 
 
 if __name__ == "__main__":
@@ -141,6 +160,9 @@ if __name__ == "__main__":
 
     # Get the most frequent protein
     most_frequent_protein = protein_counts.index[0]
+    print(
+        f"Most frequent protein: {most_frequent_protein} ({protein_counts.iloc[0]} occurrences)"
+    )
     most_freq_protein_df = df_final[df_final["Proteins"] == most_frequent_protein]
 
     # Analyze each drug
@@ -165,11 +187,11 @@ if __name__ == "__main__":
         print("\nAnalysis Summary:")
         print(f"Total drugs analyzed: {len(all_results)}")
         print(
-            f"Drugs with significant differences: {final_results['Statistically_Significant'].value_counts()['Yes']}"
+            f"Drugs with significant differences: {final_results['Significant'].value_counts()[True]}"
         )
 
         # Effect size summary
-        effect_summary = final_results["Effect_Interpretation"].value_counts()
+        effect_summary = final_results["Effect"].value_counts()
         print("\nEffect Size Distribution:")
         print(effect_summary)
 
