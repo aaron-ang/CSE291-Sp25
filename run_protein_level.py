@@ -45,12 +45,13 @@ def analyze_drug(drug, df, intensities, protein, output_dir, min_samples=30):
         return None
 
     # Create plot
-    plt.figure(figsize=(15, 8))
+    fig, ax = plt.subplots(figsize=(15, 8))
     sns.kdeplot(
-        data=intensities,
+        intensities,
         label=f"Overall Distribution (n={len(intensities)})",
         linestyle="--",
         color="black",
+        ax=ax,
     )
 
     stat_results = []
@@ -87,7 +88,8 @@ def analyze_drug(drug, df, intensities, protein, output_dir, min_samples=30):
                 label += " [insufficient samples]"
 
             # Plot distribution
-            sns.kdeplot(data=col_values, label=label)
+            ax_line = sns.kdeplot(col_values, ax=ax)
+            ax_line.set_label(label)
 
             # Store results
             stat_results.append(
@@ -106,27 +108,22 @@ def analyze_drug(drug, df, intensities, protein, output_dir, min_samples=30):
             )
 
     if not stat_results:
-        plt.close()
+        plt.close(fig)
         return None
 
-    plt.title(
+    handles, labels = ax.get_legend_handles_labels()
+    ax.legend(handles, labels, loc="best")
+    ax.set_title(
         f"Distribution Comparison for {protein} - {drug}\n"
         f"Minimum sample size requirement: {min_samples}\n"
         "Effect size interpretation: |d| < 0.2 negligible, 0.2 ≤ |d| < 0.5 small, "
         "0.5 ≤ |d| < 0.8 medium, |d| ≥ 0.8 large"
     )
-    plt.xlabel("Intensity")
-    plt.ylabel("Density")
-    plt.legend(bbox_to_anchor=(1.05, 1), loc="upper left")
-    plt.tight_layout()
+    ax.set_xlabel("Intensity")
 
-    # Save plot
-    plt.savefig(
-        os.path.join(output_dir, f"distro_comparison_{drug}.png"),
-        dpi=300,
-        bbox_inches="tight",
-    )
-    plt.close()
+    fig.tight_layout()
+    plt.savefig(os.path.join(output_dir, f"distro_comparison_{drug}.png"))
+    plt.close(fig)
 
     return pd.DataFrame(stat_results)
 
