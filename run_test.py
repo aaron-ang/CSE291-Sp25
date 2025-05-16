@@ -129,27 +129,10 @@ def process_protein(protein: str, df: pd.DataFrame, drugs: list[str]):
 if __name__ == "__main__":
     data_path_csv = "data/mq_variants_intensity_cleaned.csv"
     df = pd.read_csv(data_path_csv)
-    drugs = get_drug_names(df)
-    proteins = df["Proteins"].str.split(";").explode().unique()
-    print(f"Found {len(drugs)} drugs and {len(proteins)} proteins")
 
-    all_results = []
-
-    # # Single core processing
-    # for protein in tqdm(proteins, desc="Proteins"):
-    #     res = process_protein(protein, df, drugs)
-    #     if res is not None:
-    #         all_results.append(res)
-
-    # Multi‐core processing
-    with ProcessPoolExecutor() as ex:
-        futures = [ex.submit(process_protein, p, df, drugs) for p in proteins]
-        for fut in tqdm(as_completed(futures), total=len(futures), desc="Peptides"):
-            res = fut.result()
-            if res is not None:
-                all_results.append(res)
-
-    results = pd.concat(all_results, ignore_index=True)
-    sig = results[results["significant"]]
-    print(f"Performed {len(results)} tests; {len(sig)} significant")
-    sig.to_csv("data/significant_t_tests.csv", index=False)
+    treatment_cols = [col for col in df.columns if col.startswith("_dyn_")]
+    treatment_series = df.set_index("Variant")[treatment_cols].stack()
+    treatment_df = treatment_series.reset_index(level=1, name="intensity").rename(
+        columns={"level_1": "condition"}
+    )
+    print(treatment_df)
