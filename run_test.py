@@ -1,6 +1,7 @@
 import re
 from concurrent.futures import ProcessPoolExecutor, as_completed
-
+import seaborn as sns
+import matplotlib.pyplot as plt
 import pandas as pd
 import numpy as np
 from scipy import stats
@@ -72,7 +73,7 @@ def run_t_test(
     alpha: float = 0.05,
 ):
     """
-    Perform one‐sided Welch’s t-test (alternative='less') of each dose vs control.
+    Perform one‐sided Welch's t-test (alternative='less') of each dose vs control.
     Returns DataFrame with columns ['dose','t_statistic','p_value','significant'].
     """
     records = []
@@ -135,4 +136,44 @@ if __name__ == "__main__":
     treatment_df = treatment_series.reset_index(level=1, name="intensity").rename(
         columns={"level_1": "condition"}
     )
-    print(treatment_df)
+    
+    # Filter out zero values
+    treatment_df_filtered = treatment_df[treatment_df['intensity'] != 0.0].copy()
+    
+    # Print information about filtered values
+    total_points = len(treatment_df)
+    filtered_points = len(treatment_df_filtered)
+    print(f"\nFiltered {total_points - filtered_points} zero values out of {total_points} total points")
+    
+    # Calculate and print statistics on filtered data
+    stats_dict = {
+        'Mean': np.mean(treatment_df_filtered['intensity']),
+        'Standard Deviation': np.std(treatment_df_filtered['intensity']),
+        'Median': np.median(treatment_df_filtered['intensity']),
+        'Q1 (25th percentile)': np.percentile(treatment_df_filtered['intensity'], 25),
+        'Q3 (75th percentile)': np.percentile(treatment_df_filtered['intensity'], 75),
+        'Min': np.min(treatment_df_filtered['intensity']),
+        'Max': np.max(treatment_df_filtered['intensity']),
+        'Skewness': stats.skew(treatment_df_filtered['intensity']),
+        'Kurtosis': stats.kurtosis(treatment_df_filtered['intensity'])
+    }
+    
+    print("\nDistribution Statistics (excluding zero values):")
+    for stat_name, value in stats_dict.items():
+        print(f"{stat_name}: {value:.2f}")
+    
+    # Create distribution plot with filtered data
+    plt.figure(figsize=(10, 6))
+    sns.histplot(data=treatment_df_filtered, x='intensity', kde=True)
+    plt.title('Distribution of Intensity Values (excluding zeros)')
+    plt.xlabel('Intensity')
+    plt.ylabel('Count')
+    
+    # Add vertical lines for mean and median
+    plt.axvline(stats_dict['Mean'], color='red', linestyle='--', label='Mean')
+    plt.axvline(stats_dict['Median'], color='green', linestyle='--', label='Median')
+    plt.legend()
+    
+    # Save the plot instead of showing it
+    plt.savefig('data/intensity_distribution_no_zeros.png', dpi=300, bbox_inches='tight')
+    plt.close()  # Close the figure to free memory
