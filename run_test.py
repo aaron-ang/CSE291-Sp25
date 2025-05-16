@@ -140,6 +140,9 @@ if __name__ == "__main__":
     # Filter out zero values
     treatment_df_filtered = treatment_df[treatment_df['intensity'] != 0.0].copy()
     
+    # Save just the intensity values to a simple CSV
+    treatment_df_filtered['intensity'].to_csv('data/all_intensities_distribution.csv', index=False, header=False)
+    
     # Print information about filtered values
     total_points = len(treatment_df)
     filtered_points = len(treatment_df_filtered)
