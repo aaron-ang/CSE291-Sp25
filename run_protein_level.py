@@ -34,22 +34,15 @@ def process_protein_data(df: pd.DataFrame):
     return df_frequent, frequent_proteins
 
 
-def _compute_cohens_d(a: np.ndarray, b: np.ndarray, equal_var: bool = False) -> float:
+def compute_cohens_d(a: np.ndarray, b: np.ndarray) -> float:
     """Compute Cohen’s d for two samples."""
     na, nb = len(a), len(b)
     var_a, var_b = a.var(ddof=1), b.var(ddof=1)
-    if equal_var:
-        pooled = ((na - 1) * var_a + (nb - 1) * var_b) / (na + nb - 2)
-        return (a.mean() - b.mean()) / np.sqrt(pooled) if pooled > 0 else 0.0
-    # Welch’s d
-    return (
-        (a.mean() - b.mean()) / np.sqrt(var_a / na + var_b / nb)
-        if (var_a > 0 and var_b > 0)
-        else 0.0
-    )
+    pooled = ((na - 1) * var_a + (nb - 1) * var_b) / (na + nb - 2)
+    return (a.mean() - b.mean()) / np.sqrt(pooled) if pooled > 0 else 0.0
 
 
-def _interpret_effect(d: float) -> str:
+def interpret_effect(d: float) -> str:
     ad = abs(d)
     if ad < 0.2:
         return "negligible"
@@ -69,7 +62,6 @@ def analyze_drug(
     min_samples: int = 30,
     max_concentrations: int = 5,
     alpha: float = 0.05,
-    equal_var: bool = False,
 ):
     """
     Compare the distribution of a drug’s intensities against the overall background.
@@ -105,9 +97,9 @@ def analyze_drug(
         if n == 0:
             continue
 
-        d = _compute_cohens_d(vals, intensities, equal_var=equal_var)
-        t_stat, p_val = stats.ttest_ind(vals, intensities, equal_var=equal_var)
-        effect = _interpret_effect(d)
+        d = compute_cohens_d(vals, intensities)
+        t_stat, p_val = stats.ttest_ind(vals, intensities, equal_var=False)
+        effect = interpret_effect(d)
         enough = n >= min_samples
         lbl = f"{col} (n={n}, {effect})" + ("" if enough else " [low n]")
 
@@ -169,6 +161,8 @@ if __name__ == "__main__":
     with open("data/all_intensities_distribution.txt") as f:
         intensities = [float(line.strip()) for line in f]
 
+    print(f"Overall intensities: {len(intensities)} samples")
+
     all_results = []
     for drug in drugs:
         print(f"Analyzing drug {drug}...")
@@ -185,19 +179,22 @@ if __name__ == "__main__":
 
         # Print summary statistics
         print("\nAnalysis Summary:")
-        print(f"Total drugs analyzed: {len(all_results)}")
+        print(f"Total drugs analyzed: {len(drugs)}")
+        signficant_count = final_results["Significant"].sum()
         print(
-            f"Drugs with significant differences: {final_results['Significant'].value_counts()[True]}"
+            f"{signficant_count} ({signficant_count / len(final_results) * 100:.2f}%) of drug dosages were significant."
         )
 
         # Effect size summary
-        effect_summary = final_results["Effect"].value_counts()
-        print("\nEffect Size Distribution:")
+        effect_summary = final_results[final_results["Significant"]][
+            "Effect"
+        ].value_counts()
+        print("\nEffect Size Distribution (Significant Results):")
         print(effect_summary)
 
         # Sample size issues
         insufficient_samples = final_results[~final_results["Enough_Samples"]]
         if len(insufficient_samples) > 0:
             print(
-                f"\nWARNING: {len(insufficient_samples)} conditions had insufficient samples."
+                f"\nWARNING: {len(insufficient_samples)} ({len(insufficient_samples) / len(final_results) * 100:.2f}%) of analyzed dosages had insufficient samples."
             )
