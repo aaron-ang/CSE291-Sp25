@@ -28,4 +28,4 @@ uv remove <name>
 1. Run `download.ipynb` to download the dataset and save to CSV format.
 2. Run `preproc.ipynb` to clean the CSV file.
 3. `run_test.py` calculates all p-values of each peptide's relative intensity against the background variation distribution
-4. `run_protein_level.py` runs protein level analysis to see differences in the backgroun variation distribution and specific treated protein distribution
+4. `run_protein_level.py` runs protein-level analysis to see differences in the background variation distribution and specific treated protein distribution
