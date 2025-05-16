@@ -177,3 +177,27 @@ if __name__ == "__main__":
     # Save the plot instead of showing it
     plt.savefig('data/intensity_distribution_no_zeros.png', dpi=300, bbox_inches='tight')
     plt.close()  # Close the figure to free memory
+    
+    # Calculate z-scores for all points
+    z_scores = stats.zscore(treatment_df_filtered['intensity'])
+    
+    # Calculate two-sided p-values for all points
+    p_values = 2 * (1 - stats.norm.cdf(np.abs(z_scores)))
+    
+    # Count significant points (p < 0.05)
+    significant_points = np.sum(p_values < 0.05)
+    
+    print("\nZ-score Analysis:")
+    print(f"Total non-zero points analyzed: {len(treatment_df_filtered)}")
+    print(f"Points with p < 0.05: {significant_points}")
+    print(f"Percentage of significant points: {(significant_points/len(treatment_df_filtered))*100:.2f}%")
+    
+    # Add z-scores and p-values to the DataFrame for reference
+    treatment_df_filtered['z_score'] = z_scores
+    treatment_df_filtered['p_value'] = p_values
+    
+    # Save the DataFrame to CSV
+    treatment_df_filtered.to_csv('data/pval_intensities.csv', index=True)
+
+
+    
