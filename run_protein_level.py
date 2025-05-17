@@ -61,7 +61,7 @@ def analyze_drug(
     output_dir: str,
     min_samples: int = 30,
     max_concentrations: int = 5,
-    alpha: float = 0.05,
+    alpha: float = 0.01,
 ):
     """
     Compare the distribution of a drug’s intensities against the overall background.

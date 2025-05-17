@@ -44,6 +44,14 @@ if __name__ == "__main__":
         "Kurtosis": stats.kurtosis(treatment_df_filtered["intensity"]),
     }
 
+    # Calculate z-scores for all points
+    z_scores = stats.zscore(treatment_df_filtered["intensity"])
+
+    # Calculate two-sided p-values for all points
+    p_values = 2 * (1 - stats.norm.cdf(np.abs(z_scores)))
+    alpha = 0.01
+    significant_intensities = treatment_df_filtered["intensity"][p_values < alpha]
+
     print("\nDistribution Statistics (excluding zero values):")
     for stat_name, value in stats_dict.items():
         print(f"{stat_name}: {value:.2f}")
@@ -54,6 +62,8 @@ if __name__ == "__main__":
     plt.title("Distribution of Intensity Values (excluding zeros)")
     plt.xlabel("Intensity")
     plt.ylabel("Count")
+
+    sns.rugplot(x=significant_intensities, color="purple", label=f"p < {alpha}")
 
     # Add vertical lines for mean and median
     plt.axvline(stats_dict["Mean"], color="red", linestyle="--", label="Mean")
@@ -66,14 +76,8 @@ if __name__ == "__main__":
     )
     plt.close()  # Close the figure to free memory
 
-    # Calculate z-scores for all points
-    z_scores = stats.zscore(treatment_df_filtered["intensity"])
-
-    # Calculate two-sided p-values for all points
-    p_values = 2 * (1 - stats.norm.cdf(np.abs(z_scores)))
-
     # Count significant points (p < 0.05)
-    significant_points = np.sum(p_values < 0.05)
+    significant_points = np.sum(p_values < alpha)
 
     print("\nZ-score Analysis:")
     print(f"Total non-zero points analyzed: {len(treatment_df_filtered)}")
