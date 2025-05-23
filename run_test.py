@@ -77,24 +77,42 @@ def calculate_significance(df, alpha=0.01):
     return df, significant_fc
 
 
-def create_distribution_plot(df, stats_dict, significant_fc, alpha, output_path):
+def create_distribution_plot(df, stats_dict, significant_fc, alpha, output_path: str):
+    # Create a histogram of log fold changes
     plt.figure(figsize=(10, 6))
     sns.histplot(data=df, x="log_fold_change", kde=True)
-    plt.title("Distribution of Log Fold Change")
-    plt.xlabel("Log Fold Change")
-    plt.ylabel("Count")
-
     # Add rug plot for significant points
     sns.rugplot(x=significant_fc, color="purple", label=f"p < {alpha}")
+    plt.xlabel("Log Fold Change")
+    plt.ylabel("Count")
+    plt.title("Distribution of Log Fold Change")
 
-    # Add vertical lines for mean and median
+    # Add mean and median lines
     plt.axvline(stats_dict["Mean"], color="red", linestyle="--", label="Mean")
     plt.axvline(stats_dict["Median"], color="green", linestyle="--", label="Median")
     plt.legend()
 
-    # Save the plot
     plt.savefig(output_path, dpi=300, bbox_inches="tight")
-    plt.close()  # Close the figure to free memory
+    plt.close()
+
+    # Create a volcano plot
+    plt.figure(figsize=(10, 6))
+    plt.scatter(df["log_fold_change"], -np.log10(df["p_value"]), marker=".", alpha=0.3)
+    # Add threshold lines
+    plt.axhline(-np.log10(alpha), color="red", linestyle="--", label=f"p = {alpha}")
+    plt.axvline(x=-1, color="g", linestyle="--", label="log2FC = -1 and 1")
+    plt.axvline(x=1, color="g", linestyle="--")
+
+    plt.xlabel("log2(Fold Change)")
+    plt.ylabel("-log10(p-value)")
+    plt.legend()
+
+    plt.savefig(
+        output_path.replace("_distribution.png", "_volcano.png"),
+        dpi=300,
+        bbox_inches="tight",
+    )
+    plt.close()
 
 
 def save_results(df: pd.DataFrame, output_path):
