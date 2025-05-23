@@ -9,7 +9,7 @@ from scipy import stats
 
 def get_drug_names(df: pd.DataFrame):
     """
-    Extract sorted, unique drug names from intensity column headers.
+    Extract sorted, unique drug names from column headers.
     Expects columns like "_dyn_#DRUG 10nM.Tech replicate…".
     """
     pattern = r"_dyn_#(?P<drug>[^ ]+) \d+nM"
@@ -56,14 +56,14 @@ def interpret_effect(d: float) -> str:
 def analyze_drug(
     drug: str,
     protein_df: pd.DataFrame,
-    drug_intensities: pd.Series,
+    drug_fc: pd.Series,
     protein: str,
     output_dir: str,
     min_samples: int = 30,
     alpha: float = 0.01,
 ):
     """
-    Compare the distribution of a drug’s intensities against the overall background.
+    Compare the distribution of a drug’s fold change values to the overall distribution.
     """
     drug_cols = [c for c in protein_df.columns if f"{drug} " in c and "nM" in c]
 
@@ -77,13 +77,8 @@ def analyze_drug(
     # Plot background distribution
     fig, ax = plt.subplots(figsize=(15, 8))
     labels = []
-    sns.kdeplot(
-        drug_intensities,
-        color="black",
-        linestyle="--",
-        ax=ax,
-    )
-    labels.append(f"Overall (n={len(drug_intensities)})")
+    sns.kdeplot(drug_fc, color="black", linestyle="--", ax=ax)
+    labels.append(f"Overall (n={len(drug_fc)})")
 
     rows = []
     for col in drug_cols:
@@ -95,7 +90,7 @@ def analyze_drug(
             )
             continue
 
-        d = compute_cohens_d(vals, drug_intensities)
+        d = compute_cohens_d(vals, drug_fc)
         effect = interpret_effect(d)
 
         enough = n >= min_samples
@@ -107,7 +102,7 @@ def analyze_drug(
         sns.kdeplot(vals, ax=ax)
         labels.append(lbl)
 
-        t_stat, p_val = stats.ttest_ind(vals, drug_intensities, equal_var=False)
+        t_stat, p_val = stats.ttest_ind(vals, drug_fc, equal_var=False)
 
         rows.append(
             {
@@ -131,7 +126,7 @@ def analyze_drug(
         return None
 
     ax.set_title(f"{protein} – {drug} (α={alpha})")
-    ax.set_xlabel("Intensity")
+    ax.set_xlabel("Log Fold Change")
     ax.legend(labels=labels, loc="best")
     fig.tight_layout()
 
@@ -142,14 +137,39 @@ def analyze_drug(
     return pd.DataFrame(rows)
 
 
-if __name__ == "__main__":
-    # Create output directory for plots
+def print_summary_statistics(results: pd.DataFrame, drugs):
+    print("\nAnalysis Summary:")
+    print(f"Total drugs analyzed: {len(drugs)}")
+
+    significant_count = results["Significant"].sum()
+    print(
+        f"{significant_count} ({significant_count / len(results) * 100:.2f}%) of drug dosages were significant."
+    )
+
+    # Effect size summary
+    effect_summary = results[results["Significant"]]["Effect"].value_counts()
+    print("\nEffect Size Distribution (Significant Results):")
+    print(effect_summary)
+
+    # Sample size issues
+    insufficient_samples = results[~results["Enough_Samples"]]
+    if len(insufficient_samples) > 0:
+        print(
+            f"\nWARNING: {len(insufficient_samples)} ({len(insufficient_samples) / len(results) * 100:.2f}%) of analyzed dosages had insufficient samples."
+        )
+
+
+def main():
     output_dir = "data/drug_distributions"
+    input_file_path = "data/mq_variants_intensity_cleaned.csv"
+    peptide_scores_path = "data/variant_scores.csv"
+    results_output_path = "data/drug_distribution_stats.csv"
+
+    # Create output directory for plots
     os.makedirs(output_dir, exist_ok=True)
 
     # Load and process data
-    file_path = "data/mq_variants_intensity_cleaned.csv"
-    df = pd.read_csv(file_path)
+    df = pd.read_csv(input_file_path)
     drugs = get_drug_names(df)
     df_final, protein_counts = process_protein_data(df)
 
@@ -161,47 +181,33 @@ if __name__ == "__main__":
     most_freq_protein_df = df_final[df_final["Proteins"] == most_frequent_protein]
 
     # Analyze each drug
-    intensities_df = pd.read_csv("data/variant_intensity_scores.csv")
+    peptide_scores = pd.read_csv(peptide_scores_path)
 
-    print(f"Overall intensities: {len(intensities_df)} samples")
-
-    all_results = []
+    results = []
     for drug in drugs:
         print(f"Analyzing drug {drug}...")
-        drug_intensities = intensities_df[intensities_df["drug"] == drug]["intensity"]
-        results = analyze_drug(
+        drug_fc = peptide_scores[peptide_scores["drug"] == drug]["log_fold_change"]
+        result_df = analyze_drug(
             drug,
             most_freq_protein_df,
-            drug_intensities,
+            drug_fc,
             most_frequent_protein,
             output_dir,
         )
-        if results is not None:
-            all_results.append(results)
+        if result_df is not None:
+            results.append(result_df)
 
     # Combine and save all results
-    if all_results:
-        final_results = pd.concat(all_results, ignore_index=True)
-        final_results.to_csv("data/all_drug_distribution_stats.csv", index=False)
+    if not results:
+        print("No results to save.")
+        return
 
-        # Print summary statistics
-        print("\nAnalysis Summary:")
-        print(f"Total drugs analyzed: {len(drugs)}")
-        signficant_count = final_results["Significant"].sum()
-        print(
-            f"{signficant_count} ({signficant_count / len(final_results) * 100:.2f}%) of drug dosages were significant."
-        )
+    combined_results = pd.concat(results, ignore_index=True)
 
-        # Effect size summary
-        effect_summary = final_results[final_results["Significant"]][
-            "Effect"
-        ].value_counts()
-        print("\nEffect Size Distribution (Significant Results):")
-        print(effect_summary)
+    print_summary_statistics(combined_results, drugs)
 
-        # Sample size issues
-        insufficient_samples = final_results[~final_results["Enough_Samples"]]
-        if len(insufficient_samples) > 0:
-            print(
-                f"\nWARNING: {len(insufficient_samples)} ({len(insufficient_samples) / len(final_results) * 100:.2f}%) of analyzed dosages had insufficient samples."
-            )
+    combined_results.to_csv(results_output_path, index=False)
+
+
+if __name__ == "__main__":
+    main()
