@@ -55,56 +55,59 @@ def interpret_effect(d: float) -> str:
 
 def analyze_drug(
     drug: str,
-    df: pd.DataFrame,
-    intensities: list[float],
+    protein_df: pd.DataFrame,
+    drug_intensities: pd.Series,
     protein: str,
     output_dir: str,
     min_samples: int = 30,
-    max_concentrations: int = 5,
     alpha: float = 0.01,
 ):
     """
     Compare the distribution of a drug’s intensities against the overall background.
     """
-    # Validate inputs
-    intensities = np.asarray(intensities, dtype=float)
-    if intensities.size < min_samples:
-        print(
-            f"overall intensities ({intensities.size}) < min_samples ({min_samples}); skipping {drug}"
-        )
-        return None
+    drug_cols = [c for c in protein_df.columns if f"{drug} " in c and "nM" in c]
 
-    # Select up to max_concentrations
-    drug_cols = [c for c in df.columns if drug in c and "nM" in c][:max_concentrations]
-    if not drug_cols:
-        return None
+    # Sort drug columns by concentration
+    def concentration(col: str):
+        concentration = col.split()[1].split("nM")[0]
+        return int(concentration)
 
-    # Create plot
+    drug_cols.sort(key=lambda x: concentration(x))
+
+    # Plot background distribution
     fig, ax = plt.subplots(figsize=(15, 8))
     labels = []
     sns.kdeplot(
-        intensities,
+        drug_intensities,
         color="black",
         linestyle="--",
         ax=ax,
     )
-    labels.append(f"Overall (n={len(intensities)})")
+    labels.append(f"Overall (n={len(drug_intensities)})")
 
     rows = []
     for col in drug_cols:
-        vals = df[col].dropna().astype(float).values
+        vals = protein_df[col].dropna()
         n = len(vals)
-        if n == 0:
+        if n < 2:
+            print(
+                f"WARNING: {col} has only {n} samples. Skipping analysis for this drug."
+            )
             continue
 
-        d = compute_cohens_d(vals, intensities)
-        t_stat, p_val = stats.ttest_ind(vals, intensities, equal_var=False)
+        d = compute_cohens_d(vals, drug_intensities)
         effect = interpret_effect(d)
+
         enough = n >= min_samples
-        lbl = f"{col} (n={n}, {effect})" + ("" if enough else " [low n]")
+        drug_concentration = col.split()[1].split(".")[0]
+        lbl = f"{drug_concentration} (n={n}, {effect})"
+        if not enough:
+            lbl += " [low n]"
 
         sns.kdeplot(vals, ax=ax)
         labels.append(lbl)
+
+        t_stat, p_val = stats.ttest_ind(vals, drug_intensities, equal_var=False)
 
         rows.append(
             {
@@ -127,7 +130,7 @@ def analyze_drug(
         plt.close(fig)
         return None
 
-    ax.set_title(f"{protein} – {drug} (min n={min_samples}, α={alpha})")
+    ax.set_title(f"{protein} – {drug} (α={alpha})")
     ax.set_xlabel("Intensity")
     ax.legend(labels=labels, loc="best")
     fig.tight_layout()
@@ -158,16 +161,20 @@ if __name__ == "__main__":
     most_freq_protein_df = df_final[df_final["Proteins"] == most_frequent_protein]
 
     # Analyze each drug
-    with open("data/all_intensities_distribution.txt") as f:
-        intensities = [float(line.strip()) for line in f]
+    intensities_df = pd.read_csv("data/variant_intensity_scores.csv")
 
-    print(f"Overall intensities: {len(intensities)} samples")
+    print(f"Overall intensities: {len(intensities_df)} samples")
 
     all_results = []
     for drug in drugs:
         print(f"Analyzing drug {drug}...")
+        drug_intensities = intensities_df[intensities_df["drug"] == drug]["intensity"]
         results = analyze_drug(
-            drug, most_freq_protein_df, intensities, most_frequent_protein, output_dir
+            drug,
+            most_freq_protein_df,
+            drug_intensities,
+            most_frequent_protein,
+            output_dir,
         )
         if results is not None:
             all_results.append(results)

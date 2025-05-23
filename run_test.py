@@ -3,7 +3,6 @@ import matplotlib.pyplot as plt
 import pandas as pd
 import numpy as np
 from scipy import stats
-from tqdm import tqdm
 
 
 if __name__ == "__main__":
@@ -11,18 +10,16 @@ if __name__ == "__main__":
     df = pd.read_csv(data_path_csv)
 
     treatment_cols = [col for col in df.columns if col.startswith("_dyn_")]
-    treatment_series = df.set_index("Variant")[treatment_cols].stack()
+    # Group by Unmod variant and drug
+    treatment_series = df.set_index("Unmod variant")[treatment_cols].stack()
     treatment_df = treatment_series.reset_index(level=1, name="intensity").rename(
-        columns={"level_1": "condition"}
+        columns={"level_1": "drug"}
     )
+    # Remove concentration from drug names
+    treatment_df["drug"] = treatment_df["drug"].str.split().str[0].str.split("#").str[1]
 
     # Filter out zero values
     treatment_df_filtered = treatment_df[treatment_df["intensity"] != 0.0].copy()
-
-    # Save just the intensity values to a simple CSV
-    treatment_df_filtered["intensity"].to_csv(
-        "data/all_intensities_distribution.txt", index=False, header=False
-    )
 
     # Print information about filtered values
     total_points = len(treatment_df)
@@ -91,4 +88,6 @@ if __name__ == "__main__":
     treatment_df_filtered["p_value"] = p_values
 
     # Save the DataFrame to CSV
-    treatment_df_filtered.to_csv("data/pval_intensities.csv", index=True)
+    outpath = "data/variant_intensity_scores.csv"
+    treatment_df_filtered.to_csv(outpath)
+    print(f"\nFiltered data saved to {outpath}")
