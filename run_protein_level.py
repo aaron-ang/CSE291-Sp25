@@ -108,7 +108,7 @@ def analyze_drug(
             {
                 "Drug": drug,
                 "Protein": protein,
-                "Column": col,
+                "Concentration": drug_concentration,
                 "Sample_Size": n,
                 "Enough_Samples": enough,
                 "Mean": vals.mean(),
