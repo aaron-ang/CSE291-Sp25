@@ -10,10 +10,13 @@ def load_and_preprocess_data(file_path):
     treatment_cols = [col for col in df.columns if col.startswith("_dyn_")]
 
     # Group by Unmod variant and drug
-    treatment_series = df.set_index("Unmod variant")[treatment_cols].stack()
-    treatment_df = treatment_series.reset_index(level=1, name="log_fold_change").rename(
-        columns={"level_1": "drug"}
+    treatment_series = df.set_index(["Variant", "Unmod variant"])[
+        treatment_cols
+    ].stack()
+    treatment_df = treatment_series.reset_index(level=2, name="log_fold_change").rename(
+        columns={"level_2": "drug"}
     )
+    treatment_df.sort_values(by="Unmod variant", inplace=True)
 
     # Remove concentration from drug names
     treatment_df["drug"] = treatment_df["drug"].str.split().str[0].str.split("#").str[1]
