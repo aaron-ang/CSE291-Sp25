@@ -1,8 +1,6 @@
 import os
 
 import pandas as pd
-import seaborn as sns
-import matplotlib.pyplot as plt
 import numpy as np
 from scipy import stats
 
@@ -58,8 +56,7 @@ def analyze_drug(
     protein_df: pd.DataFrame,
     drug_fc: pd.Series,
     protein: str,
-    output_dir: str,
-    min_samples: int = 30,
+    min_samples: int = 20,
     alpha: float = 0.01,
 ):
     """
@@ -75,10 +72,10 @@ def analyze_drug(
     drug_cols.sort(key=lambda x: concentration(x))
 
     # Plot background distribution
-    fig, ax = plt.subplots(figsize=(15, 8))
-    labels = []
-    sns.kdeplot(drug_fc, color="black", linestyle="--", ax=ax)
-    labels.append(f"Overall (n={len(drug_fc)})")
+    # fig, ax = plt.subplots(figsize=(15, 8))
+    # labels = []
+    # sns.kdeplot(drug_fc, color="black", linestyle="--", ax=ax)
+    # labels.append(f"Overall (n={len(drug_fc)})")
 
     rows = []
     for col in drug_cols:
@@ -95,12 +92,12 @@ def analyze_drug(
 
         enough = n >= min_samples
         drug_concentration = col.split()[1].split(".")[0]
-        lbl = f"{drug_concentration} (n={n}, {effect})"
-        if not enough:
-            lbl += " [low n]"
+        # lbl = f"{drug_concentration} (n={n}, {effect})"
+        # if not enough:
+        #     lbl += " [low n]"
 
-        sns.kdeplot(vals, ax=ax)
-        labels.append(lbl)
+        # sns.kdeplot(vals, ax=ax)
+        # labels.append(lbl)
 
         t_stat, p_val = stats.ttest_ind(vals, drug_fc, equal_var=False)
 
@@ -121,18 +118,18 @@ def analyze_drug(
             }
         )
 
-    if not rows:
-        plt.close(fig)
-        return None
+    # if not rows:
+    #     plt.close(fig)
+    #     return None
 
-    ax.set_title(f"{protein} – {drug} (α={alpha})")
-    ax.set_xlabel("Log Fold Change")
-    ax.legend(labels=labels, loc="best")
-    fig.tight_layout()
+    # ax.set_title(f"{protein} – {drug} (α={alpha})")
+    # ax.set_xlabel("Log Fold Change")
+    # ax.legend(labels=labels, loc="best")
+    # fig.tight_layout()
 
-    out_path = os.path.join(output_dir, f"{protein}_{drug}_distribution.png")
-    fig.savefig(out_path)
-    plt.close(fig)
+    # out_path = os.path.join(output_dir, f"{protein}_{drug}_distribution.png")
+    # fig.savefig(out_path)
+    # plt.close(fig)
 
     return pd.DataFrame(rows)
 
@@ -191,8 +188,7 @@ def main():
             drug,
             most_freq_protein_df,
             drug_fc,
-            most_frequent_protein,
-            output_dir,
+            most_frequent_protein
         )
         if result_df is not None:
             results.append(result_df)
