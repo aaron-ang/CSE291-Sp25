@@ -117,8 +117,9 @@ def analyze_drug(
                 "Significant": p_val < alpha,
             }
         )
-
-    return pd.DataFrame(rows)
+    df = pd.DataFrame(rows)
+    df = df[(df["Significant"] == True) & (df["Enough_Samples"] == True) & (df["Effect"].isin({"medium", "large"}))]
+    return df
 
 
 def print_summary_statistics(results: pd.DataFrame, drugs):
