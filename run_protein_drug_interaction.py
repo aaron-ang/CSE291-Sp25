@@ -118,19 +118,6 @@ def analyze_drug(
             }
         )
 
-    # if not rows:
-    #     plt.close(fig)
-    #     return None
-
-    # ax.set_title(f"{protein} – {drug} (α={alpha})")
-    # ax.set_xlabel("Log Fold Change")
-    # ax.legend(labels=labels, loc="best")
-    # fig.tight_layout()
-
-    # out_path = os.path.join(output_dir, f"{protein}_{drug}_distribution.png")
-    # fig.savefig(out_path)
-    # plt.close(fig)
-
     return pd.DataFrame(rows)
 
 
@@ -171,27 +158,27 @@ def main():
     df_final, protein_counts = process_protein_data(df)
 
     # Get the most frequent protein
-    most_frequent_protein = protein_counts.index[0]
-    print(
-        f"Most frequent protein: {most_frequent_protein} ({protein_counts.iloc[0]} occurrences)"
-    )
-    most_freq_protein_df = df_final[df_final["Proteins"] == most_frequent_protein]
-
-    # Analyze each drug
-    peptide_scores = pd.read_csv(peptide_scores_path)
-
     results = []
-    for drug in drugs:
-        print(f"Analyzing drug {drug}...")
-        drug_fc = peptide_scores[peptide_scores["drug"] == drug]["log_fold_change"]
-        result_df = analyze_drug(
-            drug,
-            most_freq_protein_df,
-            drug_fc,
-            most_frequent_protein
+    most_frequent_proteins = protein_counts.index[:5]
+    for most_frequent_protein in most_frequent_proteins:
+        print(
+            f"Analyzing protein: {most_frequent_protein} ({protein_counts.iloc[0]} occurrences)"
         )
-        if result_df is not None:
-            results.append(result_df)
+        most_freq_protein_df = df_final[df_final["Proteins"] == most_frequent_protein]
+
+        # Analyze each drug
+        peptide_scores = pd.read_csv(peptide_scores_path)
+        for drug in drugs:
+            print(f"Analyzing drug {drug}...")
+            drug_fc = peptide_scores[peptide_scores["drug"] == drug]["log_fold_change"]
+            result_df = analyze_drug(
+                drug,
+                most_freq_protein_df,
+                drug_fc,
+                most_frequent_protein
+            )
+            if result_df is not None:
+                results.append(result_df)
 
     # Combine and save all results
     if not results:
