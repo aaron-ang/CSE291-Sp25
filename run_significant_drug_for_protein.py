@@ -2,7 +2,7 @@ import os
 
 import pandas as pd
 import seaborn as sns
-import platform
+import sys
 import matplotlib.pyplot as plt
 import numpy as np
 from scipy import stats
@@ -133,7 +133,7 @@ def analyze_drug(
     fig.tight_layout()
 
     out_path = os.path.join(output_dir, f"{protein}_{drug}_distribution.png")
-    if platform.system() == "Windows":
+    if sys.platform == "win32":
         out_path = out_path.replace("|", "-")
     fig.savefig(out_path)
     plt.close(fig)
@@ -176,30 +176,35 @@ def main():
     df = pd.read_csv(input_file_path)
     drugs = get_drug_names(df)
     df_final, protein_counts = process_protein_data(df)
+    
+    results = []
 
     # Get the most frequent protein
-    most_frequent_protein = protein_counts.index[0]
-    print(
-        f"Most frequent protein: {most_frequent_protein} ({protein_counts.iloc[0]} occurrences)"
-    )
-    most_freq_protein_df = df_final[df_final["Proteins"] == most_frequent_protein]
-
-    # Analyze each drug
-    peptide_scores = pd.read_csv(peptide_scores_path)
-
-    results = []
-    for drug in drugs:
-        print(f"Analyzing drug {drug}...")
-        drug_fc = peptide_scores[peptide_scores["drug"] == drug]["log_fold_change"]
-        result_df = analyze_drug(
-            drug,
-            most_freq_protein_df,
-            drug_fc,
-            most_frequent_protein,
-            output_dir,
+    most_frequent_proteins = protein_counts.index[:5]
+    for most_frequent_protein in most_frequent_proteins:
+        output_dir = os.path.join(output_dir, most_frequent_protein)
+        if sys.platform == "win32":
+            output_dir = output_dir.replace("|", "-")
+        print(
+            f"Most frequent protein: {most_frequent_protein} ({protein_counts.iloc[0]} occurrences)"
         )
-        if result_df is not None:
-            results.append(result_df)
+        most_freq_protein_df = df_final[df_final["Proteins"] == most_frequent_protein]
+
+        # Analyze each drug
+        peptide_scores = pd.read_csv(peptide_scores_path)
+        for drug in drugs:
+            print(f"Analyzing drug {drug}...")
+            drug_fc = peptide_scores[peptide_scores["drug"] == drug]["log_fold_change"]
+            result_df = analyze_drug(
+                drug,
+                most_freq_protein_df,
+                drug_fc,
+                most_frequent_protein,
+                output_dir,
+            )
+            if result_df is not None:
+                results.append(result_df)
+        output_dir = "data/drug_distributions_significant"  # Reset output directory for next protein
 
     # Combine and save all results
     if not results:
