@@ -1,81 +1,74 @@
-import pandas as pd
-import re
 import numpy as np
+import pandas as pd
+from tqdm import tqdm
 
-# Read the CSV file
-df = pd.read_csv('data/mq_variants_intensity_cleaned.csv')
+from monotonic_variants import (
+    get_sorted_drug_cols,
+    is_strictly_monotonic,
+    same_sign_filter,
+)
 
-# 1. Filter for rows with a single protein in 'Proteins'
-df_single = df[~df['Proteins'].str.contains(';')].copy()
 
-# 2. Identify intensity columns for the specified concentrations
-intensity_cols = [col for col in df_single.columns if col.startswith('_dyn_#')]
-target_concentrations = ['3nM', '300nM', '3000nM', '30000nM']
+if __name__ == "__main__":
+    # Read CSV and filter to target proteins
+    df = pd.read_csv("data/mq_variants_intensity_cleaned.csv")
+    drug_stats = pd.read_csv("data/drug_distribution_stats.csv")
 
-# Function to parse drug and concentration from column names
-def parse_drug_conc(col):
-    match = re.match(r"_dyn_#([\w\-]+)(?:_in[\w\d]+)? ([\d]+nM|DMSO)", col)
-    if match:
-        drug = match.group(1)
-        conc = match.group(2)
-        return drug, conc
-    else:
-        return None, None
+    target_proteins = drug_stats["Protein"].unique()
+    df = df[df["Proteins"].isin(target_proteins)]
+    sorted_drug_cols = get_sorted_drug_cols(df)
 
-# Group columns by drug and concentration
-drug_cols = {}
-for col in intensity_cols:
-    drug, conc = parse_drug_conc(col)
-    if drug and conc in target_concentrations:
-        if drug not in drug_cols:
-            drug_cols[drug] = {}
-        drug_cols[drug][conc] = col
+    # Initialize statistics
+    stats = {
+        "proteins_tested": 0,
+        "drugs_tested": len(sorted_drug_cols),
+        "monotonic_protein_drug_pairs": 0,
+    }
 
-# Function to check strict monotonicity
-def is_strictly_monotonic(series):
-    if len(series) <= 1:
-        return False
-    if all(series[i] < series[i+1] for i in range(len(series)-1)):
-        return True
-    if all(series[i] > series[i+1] for i in range(len(series)-1)):
-        return True
-    return False
+    # Calculate average intensities for each protein and drug combination
+    results = []
+    for protein, grp in tqdm(df.groupby("Proteins")):
+        stats["proteins_tested"] += 1
 
-# Calculate average intensities for each protein and drug combination
-results = []
-total_proteins = df_single['Proteins'].nunique()
-print(f"Analyzing {total_proteins} proteins...")
+        for drug, cols in sorted_drug_cols.items():
+            cols, concs = zip(*cols)
 
-for protein in df_single['Proteins'].unique():
-    protein_df = df_single[df_single['Proteins'] == protein]
-    
-    for drug, conc_cols in drug_cols.items():
-        if len(conc_cols) == len(target_concentrations):  # Only process if we have all concentrations
             # Calculate average intensity for each concentration
             avg_intensities = []
-            for conc in target_concentrations:
-                col = conc_cols[conc]
-                avg_intensity = protein_df[col].mean()
+            for col in cols:
+                avg_intensity = float(grp[col].mean())
                 avg_intensities.append(avg_intensity)
-            
-            # Check if the average intensities are strictly monotonic
-            is_monotonic = is_strictly_monotonic(avg_intensities)
-            
-            if is_monotonic:
-                results.append({
-                    'Protein': protein,
-                    'Drug': drug,
-                    **{f'Avg_Intensity_{conc}': intensity 
-                       for conc, intensity in zip(target_concentrations, avg_intensities)}
-                })
 
-# Print summary
-print(f"\nFound {len(results)} monotonic drug-protein combinations")
+            if is_strictly_monotonic(np.array(avg_intensities)):
+                stats["monotonic_protein_drug_pairs"] += 1
+                results.append(
+                    {
+                        "Protein": protein,
+                        "Drug": drug,
+                        "Avg_Intensities": avg_intensities,
+                        **{
+                            f"Avg_Intensity_{conc}": intensity
+                            for conc, intensity in zip(concs, avg_intensities)
+                        },
+                    }
+                )
 
-# Save results to CSV
-if results:
+    # Print summary statistics
+    print("=== Protein-Level Monotonic Summary ===")
+    print(f"Proteins tested: {stats['proteins_tested']}")
+    print(f"Drugs tested: {stats['drugs_tested']}")
+    print(f"Strictly monotonic cases: {stats['monotonic_protein_drug_pairs']}")
+
     results_df = pd.DataFrame(results)
-    results_df.to_csv('data/monotonic_protein_averages.csv', index=False)
-    print(f"Results saved to data/monotonic_protein_averages.csv")
-else:
-    print("No monotonic combinations found") 
+
+    # Filter out results where intensities change sign
+    df_len = len(results_df)
+    results_df_filtered = results_df[
+        results_df["Avg_Intensities"].apply(same_sign_filter)
+    ]
+    df_len_filtered = len(results_df_filtered)
+    diff = df_len - df_len_filtered
+    print(f"\nFiltered out {diff} ({(diff / df_len):.2%}) results that changed sign")
+
+    output_path = "data/monotonic_protein_averages.csv"
+    results_df_filtered.to_csv(output_path, index=False)

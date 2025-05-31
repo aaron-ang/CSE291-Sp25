@@ -6,9 +6,30 @@ import pandas as pd
 from tqdm import tqdm
 
 
-# Parse drug and concentration from the column names
-# Example: '_dyn_#AEE-788_inBT474 1000nM.Tech replicate 1 of 1'
+def get_sorted_drug_cols(df: pd.DataFrame):
+    # Group columns by drug
+    intensity_cols = [col for col in df.columns if col.startswith("_dyn_#")]
+    drug_cols = defaultdict(list)
+    for col in intensity_cols:
+        drug, conc = parse_drug_conc(col)
+        if drug:
+            drug_cols[drug].append((col, conc))
+
+    # Sort drug columns by concentration
+    keep_concs = ["3nM", "300nM", "3000nM", "30000nM"]
+    sorted_drug_cols = {}
+    for drug, cols in drug_cols.items():
+        filtered = [(col, conc) for col, conc in cols if conc in keep_concs]
+        sorted_drug_cols[drug] = sorted(filtered, key=lambda x: to_nm(x[1]))
+
+    return sorted_drug_cols
+
+
 def parse_drug_conc(col):
+    """Parse drug and concentration from the column name.
+
+    Example: '_dyn_#AEE-788_inBT474 1000nM.Tech replicate 1 of 1'
+    """
     m = re.match(r"_dyn_#([\w\-]+)(?:_in[\w\d]+)? ([\d]+nM|DMSO)", col)
     return (m.group(1), m.group(2)) if m else (None, None)
 
@@ -31,28 +52,15 @@ if __name__ == "__main__":
     # Read CSVs and filter to target proteins
     df = pd.read_csv("data/mq_variants_intensity_cleaned.csv")
     drug_stats = pd.read_csv("data/drug_distribution_stats.csv")
+
     target_proteins = drug_stats["Protein"].unique()
     df = df[df["Proteins"].isin(target_proteins)]
-
-    # Group columns by drug
-    intensity_cols = [col for col in df.columns if col.startswith("_dyn_#")]
-    drug_cols = defaultdict(list)
-    for col in intensity_cols:
-        drug, conc = parse_drug_conc(col)
-        if drug:
-            drug_cols[drug].append((col, conc))
-
-    # Sort drug columns by concentration
-    keep_concs = ["3nM", "300nM", "3000nM", "30000nM"]
-    drug_cols_sorted = {}
-    for drug, cols in drug_cols.items():
-        filtered = [(col, conc) for col, conc in cols if conc in keep_concs]
-        drug_cols_sorted[drug] = sorted(filtered, key=lambda x: to_nm(x[1]))
+    sorted_drug_cols = get_sorted_drug_cols(df)
 
     # Initialize global statistics
     stats = {
         "proteins_tested": 0,
-        "drugs_tested": len(drug_cols_sorted),
+        "drugs_tested": len(sorted_drug_cols),
         "variants_tested": 0,
         "strict_cases": 0,
     }
@@ -62,7 +70,7 @@ if __name__ == "__main__":
     for protein, grp in tqdm(df.groupby("Proteins")):
         stats["proteins_tested"] += 1
         variants = grp["Variant"]
-        for drug, cols in drug_cols_sorted.items():
+        for drug, cols in sorted_drug_cols.items():
             cols, concs = zip(*cols)
             data = grp[list(cols)].to_numpy()
             stats["variants_tested"] += data.shape[0]
@@ -75,15 +83,15 @@ if __name__ == "__main__":
                 results.append(
                     {
                         "Protein": protein,
-                        "Drug": drug,
                         "Variant": var,
+                        "Drug": drug,
                         "Concentrations": concs,
                         "Intensities": intens.tolist(),
                     }
                 )
 
     # Print summary statistics
-    print("=== Monotonic Summary ===")
+    print("=== Variant-Level Monotonic Summary ===")
     print(f"Proteins tested: {stats['proteins_tested']}")
     print(f"Drugs tested:    {stats['drugs_tested']}")
     print(f"Variants tested: {stats['variants_tested']}")
