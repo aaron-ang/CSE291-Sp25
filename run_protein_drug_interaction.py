@@ -1,9 +1,10 @@
 import os
+from collections import defaultdict
+from pathlib import Path
 
 import pandas as pd
 import numpy as np
 import seaborn as sns
-import sys
 import matplotlib.pyplot as plt
 from scipy import stats
 
@@ -19,31 +20,32 @@ def get_drug_names(df: pd.DataFrame):
 
 
 def process_protein_data(df: pd.DataFrame):
-    # Filter out rows where Proteins contain semicolons
+    # Filter out peptides that are mapped to multiple proteins
+    initial_rows = len(df)
     df_filtered = df[~df["Proteins"].str.contains(";", na=False)]
+    rows_after_semicolon = len(df_filtered)
 
-    # Count occurrences of each protein in descending order
+    filtered_rows = initial_rows - rows_after_semicolon
+    print(
+        f"Filtered out {filtered_rows} ({filtered_rows / initial_rows:.2%}) "
+        f"peptides mapped to multiple proteins; {rows_after_semicolon} remain."
+    )
+
+    # Get most frequently occurring proteins
     protein_counts = df_filtered["Proteins"].value_counts()
-
-    # Filter proteins that appear in at least 10 rows
-    sample_count = 20
-    frequent_proteins = protein_counts[protein_counts >= sample_count]
-
-    # Create a filtered dataset with only frequent proteins
-    df_frequent = df_filtered[df_filtered["Proteins"].isin(frequent_proteins.index)]
-
-    return df_frequent, frequent_proteins
+    return df_filtered, protein_counts
 
 
-def compute_cohens_d(a: np.ndarray, b: np.ndarray) -> float:
-    """Compute Cohen’s d for two samples."""
+def compute_cohens_d(a: np.ndarray, b: np.ndarray):
+    """Compute Cohen's d for two samples."""
     na, nb = len(a), len(b)
     var_a, var_b = a.var(ddof=1), b.var(ddof=1)
     pooled = ((na - 1) * var_a + (nb - 1) * var_b) / (na + nb - 2)
     return (a.mean() - b.mean()) / np.sqrt(pooled) if pooled > 0 else 0.0
 
 
-def interpret_effect(d: float) -> str:
+def interpret_effect(d: float):
+    """Interpret Cohen's d effect size."""
     ad = abs(d)
     if ad < 0.2:
         return "negligible"
@@ -54,181 +56,214 @@ def interpret_effect(d: float) -> str:
     return "large"
 
 
+def get_drug_columns(protein_df: pd.DataFrame, drug: str):
+    """Get and sort drug columns by concentration."""
+    drug_cols = [c for c in protein_df.columns if f"{drug} " in c and "nM" in c]
+    return sorted(drug_cols, key=extract_concentration)
+
+
+def extract_concentration(col: str):
+    """Extract numeric concentration from column name."""
+    return int(col.split()[1].split("nM")[0])
+
+
+def create_safe_path(base_path: str, filename: str):
+    """Create safe file path, handling Windows character restrictions."""
+    path = Path(base_path) / filename
+    if os.name == "nt":  # Windows
+        path = Path(str(path).replace("|", "-"))
+    path.parent.mkdir(parents=True, exist_ok=True)
+    return path
+
+
 def analyze_drug(
     drug: str,
     protein_df: pd.DataFrame,
     drug_fc: pd.Series,
-    protein: str,
     min_samples: int = 20,
     alpha: float = 0.01,
 ):
-    """
-    Compare the distribution of a drug’s fold change values to the overall distribution.
-    """
-    drug_cols = [c for c in protein_df.columns if f"{drug} " in c and "nM" in c]
+    """Analyze drug effects on a specific protein."""
+    protein = protein_df["Proteins"].iloc[0]
+    drug_cols = get_drug_columns(protein_df, drug)
 
-    # Sort drug columns by concentration
-    def concentration(col: str):
-        concentration = col.split()[1].split("nM")[0]
-        return int(concentration)
+    # Track filtering statistics
+    filter_counts = defaultdict(int)
+    results = []
 
-    drug_cols.sort(key=lambda x: concentration(x))
-
-    # Plot background distribution
-    fig, ax = plt.subplots(figsize=(15, 8))
-    labels = []
-    sns.kdeplot(drug_fc, color="black", linestyle="--", ax=ax)
-    labels.append(f"Overall (n={len(drug_fc)})")
-
-    rows = []
-    for col in drug_cols:
-        drug_concentration = col.split()[1].split(".")[0]
-        vals = protein_df[col].dropna()
-        n = len(vals)
-        if n < min_samples:
-            continue
-
-        d = compute_cohens_d(vals, drug_fc)
-        effect = interpret_effect(d)
-        if effect == "negligible" or effect == "small":
-            continue
-        t_stat, p_val = stats.ttest_ind(vals, drug_fc, equal_var=False)
-        if np.isnan(p_val):
-            print(f"WARNING: p-value is NaN for {drug} at {drug_concentration} nM.")
-            continue
-        if np.isnan(t_stat):
-            print(f"WARNING: t-statistic is NaN for {drug} at {drug_concentration} nM.")
-            continue
-        if p_val > alpha:
-            print(
-                f"Skipping {drug} at {drug_concentration} nM: p-value {p_val:.4f} > alpha {alpha}"
-            )
-            continue
-        rows.append(
-            {
-                "Drug": drug,
-                "Protein": protein,
-                "Concentration": drug_concentration,
-                "Sample_Size": n,
-                "Mean": vals.mean(),
-                "Std": vals.std(ddof=1),
-                "Cohens_d": d,
-                "Effect": effect,
-                "t_stat": t_stat,
-                "p_value": p_val
-            }
+    # Analyze each concentration
+    for conc in drug_cols:
+        result, filter_reason = analyze_single_concentration(
+            conc,
+            protein_df,
+            drug_fc,
+            drug,
+            min_samples,
+            alpha,
         )
-        
-        lbl = f"{drug_concentration} (n={n}, {effect})"
-        sns.kdeplot(vals, ax=ax)
-        labels.append(lbl)
-    
-    if len(labels) < 2:
-        print(f"No significant results for {drug} on {protein}.")
-        plt.close(fig)
-        return pd.DataFrame({
-            "Drug": [],
-            "Protein": [],
-            "Concentration": [],
-            "Sample_Size": [],
-            "Mean": [],
-            "Std": [],
-            "Cohens_d": [],
-            "Effect": [],
-            "t_stat": [],
-            "p_value": []
-        })
-    
+        filter_counts[filter_reason] += 1
+        if result:
+            results.append(result)
+
+    # Compile statistics
+    stats_dict = {
+        "tested": len(drug_cols),
+        "kept": filter_counts["kept"],
+        "filtered_low_n": filter_counts["low_n"],
+        "filtered_small_effect": filter_counts["small_effect"],
+        "filtered_pval": filter_counts["pval"],
+    }
+
+    if not results:
+        return pd.DataFrame(), stats_dict
+
+    # Create and save plot
+    fig = create_dist_plot(drug_fc, results, drug, protein)
+    output_path = create_safe_path(
+        "data/drug_distributions",
+        f"{protein}/{protein}_{drug}.png",
+    )
+    fig.savefig(output_path)
+    plt.close(fig)
+
+    return pd.DataFrame(results), stats_dict
+
+
+def analyze_single_concentration(
+    col: str,
+    protein_df: pd.DataFrame,
+    drug_fc: pd.Series,
+    drug: str,
+    min_samples: int,
+    alpha: float,
+):
+    """Analyze a single drug concentration."""
+    drug_conc = col.split()[1].split(".")[0]
+    vals = protein_df[col].dropna()
+    n = len(vals)
+
+    # Check sample size
+    if n < min_samples:
+        return None, "low_n"
+
+    # Check effect size
+    d = compute_cohens_d(vals, drug_fc)
+    effect = interpret_effect(d)
+    if effect in ("negligible", "small"):
+        return None, "small_effect"
+
+    # Statistical test
+    t_stat, p_val = stats.ttest_ind(vals, drug_fc, equal_var=False)
+    if np.isnan(p_val) or np.isnan(t_stat):
+        print(f"WARNING: NaN stats for {drug}@{drug_conc}nM.")
+        return None, "nan_stats"
+
+    if p_val > alpha:
+        return None, "pval"
+
+    # Return successful result
+    result = {
+        "Protein": protein_df["Proteins"].iloc[0],
+        "Drug": drug,
+        "Concentration": drug_conc,
+        "Sample_Size": n,
+        "Mean": vals.mean(),
+        "Std": vals.std(ddof=1),
+        "Cohens_d": d,
+        "Effect": effect,
+        "t_stat": t_stat,
+        "p_value": p_val,
+        "values": vals,  # For plotting
+    }
+    return result, "kept"
+
+
+def create_dist_plot(drug_fc: pd.Series, results: list[dict], drug: str, protein: str):
+    """Create and return distribution plot."""
+    fig, ax = plt.subplots(figsize=(15, 8))
+
+    # Plot overall distribution
+    sns.kdeplot(
+        drug_fc,
+        color="black",
+        linestyle="--",
+        ax=ax,
+        label=f"Overall (n={len(drug_fc)})",
+    )
+
+    # Plot each concentration
+    for result in results:
+        vals = result.pop("values")
+        label = (
+            f"{result['Concentration']} (n={result['Sample_Size']}, {result['Effect']})"
+        )
+        sns.kdeplot(vals, ax=ax, label=label)
+
     ax.set_title(f"Distribution of {drug} fold changes for {protein}")
     ax.set_xlabel("Fold Change")
     ax.set_ylabel("Density")
-    ax.legend(labels, loc="upper right")
+    ax.legend(loc="upper right")
     plt.tight_layout()
-    
-    output_dir = f"data/drug_distributions"
-    if not os.path.exists(output_dir):
-        os.makedirs(output_dir)
-    output_path = os.path.join(
-        output_dir, f"{protein}"
-    )
-    
-    if sys.platform == "win32":
-        output_path = output_path.replace("|", "-")
-    if not os.path.exists(output_path):
-        os.makedirs(output_path)
-        
-    output_path = os.path.join(
-        output_path, f"{protein}_{drug}.png"
-    )
-    if sys.platform == "win32":
-        output_path = output_path.replace("|", "-")
-    fig.savefig(
-        output_path
-    )
-    plt.clf()
-    plt.close(fig)
-    
-    df = pd.DataFrame(rows)
-    return df
+
+    return fig
 
 
-def print_summary_statistics(results: pd.DataFrame, drugs):
-    print("\nAnalysis Summary:")
-    print(f"Total drugs analyzed: {len(drugs)}")
+def print_summary_statistics(results: pd.DataFrame):
+    """Print analysis summary statistics."""
+    if not results.empty:
+        print("\nEffect Size Distribution (Significant Results):")
+        print(results["Effect"].value_counts())
 
-    # Effect size summary
-    effect_summary = results["Effect"].value_counts()
-    print("\nEffect Size Distribution (Significant Results):")
-    print(effect_summary)
+
+def print_global_filter_summary(global_stats: dict):
+    """Print global filtering statistics."""
+    print("\nGlobal Filter Summary:")
+    print(f"  Total channels tested:      {global_stats['tested']}")
+    print(f"  Total channels kept:        {global_stats['kept']}")
+    print(f"  Total filtered (low-n):     {global_stats['filtered_low_n']}")
+    print(f"  Total filtered (small eff): {global_stats['filtered_small_effect']}")
+    print(f"  Total filtered (p > α):     {global_stats['filtered_pval']}")
 
 
 def main():
-    output_dir = "data/drug_distributions"
+    """Main analysis pipeline."""
+    # File paths
     input_file_path = "data/mq_variants_intensity_cleaned.csv"
     peptide_scores_path = "data/variant_scores.csv"
     results_output_path = "data/drug_distribution_stats.csv"
-
-    # Create output directory for plots
-    os.makedirs(output_dir, exist_ok=True)
 
     # Load and process data
     df = pd.read_csv(input_file_path)
     drugs = get_drug_names(df)
     df_final, protein_counts = process_protein_data(df)
+    peptide_scores = pd.read_csv(peptide_scores_path)
 
-    # Get the most frequent protein
+    # Analyze top proteins
     results = []
-    most_frequent_proteins = protein_counts.index[:3]
-    for most_frequent_protein in most_frequent_proteins:
-        print(
-            f"Analyzing protein: {most_frequent_protein} ({protein_counts.iloc[0]} occurrences)"
-        )
-        most_freq_protein_df = df_final[df_final["Proteins"] == most_frequent_protein]
+    global_stats = defaultdict(int)
+    most_frequent_proteins = protein_counts.index[:50]  # Top 50 proteins
 
-        # Analyze each drug
-        peptide_scores = pd.read_csv(peptide_scores_path)
+    for protein in most_frequent_proteins:
+        print(f"Analyzing protein: {protein} ({protein_counts[protein]} occurrences)")
+        protein_df = df_final[df_final["Proteins"] == protein]
+
         for drug in drugs:
-            print(f"Analyzing drug {drug}...")
             drug_fc = peptide_scores[peptide_scores["drug"] == drug]["log_fold_change"]
-            result_df = analyze_drug(
-                drug,
-                most_freq_protein_df,
-                drug_fc,
-                most_frequent_protein
-            )
-            if result_df is not None:
-                results.append(result_df)
+            result_df, stats = analyze_drug(drug, protein_df, drug_fc)
+            results.append(result_df)
+            # Accumulate statistics
+            for key, value in stats.items():
+                global_stats[key] += value
 
-    # Combine and save all results
-    if not results:
-        print("No results to save.")
-        return
-
+    # Compile and save results
     combined_results = pd.concat(results, ignore_index=True)
-
-    print_summary_statistics(combined_results, drugs)
-
     combined_results.to_csv(results_output_path, index=False)
+
+    # Print summaries
+    print(f"Total proteins analyzed: {len(most_frequent_proteins)}")
+    print(f"Total drugs analyzed per protein: {len(drugs)}")
+    print_global_filter_summary(global_stats)
+    print_summary_statistics(combined_results)
 
 
 if __name__ == "__main__":
