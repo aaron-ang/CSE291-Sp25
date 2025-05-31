@@ -2,6 +2,9 @@ import os
 
 import pandas as pd
 import numpy as np
+import seaborn as sns
+import sys
+import matplotlib.pyplot as plt
 from scipy import stats
 
 
@@ -72,53 +75,100 @@ def analyze_drug(
     drug_cols.sort(key=lambda x: concentration(x))
 
     # Plot background distribution
-    # fig, ax = plt.subplots(figsize=(15, 8))
-    # labels = []
-    # sns.kdeplot(drug_fc, color="black", linestyle="--", ax=ax)
-    # labels.append(f"Overall (n={len(drug_fc)})")
+    fig, ax = plt.subplots(figsize=(15, 8))
+    labels = []
+    sns.kdeplot(drug_fc, color="black", linestyle="--", ax=ax)
+    labels.append(f"Overall (n={len(drug_fc)})")
 
     rows = []
     for col in drug_cols:
+        drug_concentration = col.split()[1].split(".")[0]
         vals = protein_df[col].dropna()
         n = len(vals)
-        if n < 2:
-            print(
-                f"WARNING: {col} has only {n} samples. Skipping analysis for this drug."
-            )
+        if n < min_samples:
             continue
 
         d = compute_cohens_d(vals, drug_fc)
         effect = interpret_effect(d)
-
-        enough = n >= min_samples
-        drug_concentration = col.split()[1].split(".")[0]
-        # lbl = f"{drug_concentration} (n={n}, {effect})"
-        # if not enough:
-        #     lbl += " [low n]"
-
-        # sns.kdeplot(vals, ax=ax)
-        # labels.append(lbl)
-
+        if effect == "negligible" or effect == "small":
+            continue
         t_stat, p_val = stats.ttest_ind(vals, drug_fc, equal_var=False)
-
+        if np.isnan(p_val):
+            print(f"WARNING: p-value is NaN for {drug} at {drug_concentration} nM.")
+            continue
+        if np.isnan(t_stat):
+            print(f"WARNING: t-statistic is NaN for {drug} at {drug_concentration} nM.")
+            continue
+        if p_val > alpha:
+            print(
+                f"Skipping {drug} at {drug_concentration} nM: p-value {p_val:.4f} > alpha {alpha}"
+            )
+            continue
         rows.append(
             {
                 "Drug": drug,
                 "Protein": protein,
                 "Concentration": drug_concentration,
                 "Sample_Size": n,
-                "Enough_Samples": enough,
                 "Mean": vals.mean(),
                 "Std": vals.std(ddof=1),
                 "Cohens_d": d,
                 "Effect": effect,
                 "t_stat": t_stat,
-                "p_value": p_val,
-                "Significant": p_val < alpha,
+                "p_value": p_val
             }
         )
+        
+        lbl = f"{drug_concentration} (n={n}, {effect})"
+        sns.kdeplot(vals, ax=ax)
+        labels.append(lbl)
+    
+    if len(labels) < 2:
+        print(f"No significant results for {drug} on {protein}.")
+        plt.close(fig)
+        return pd.DataFrame({
+            "Drug": [],
+            "Protein": [],
+            "Concentration": [],
+            "Sample_Size": [],
+            "Mean": [],
+            "Std": [],
+            "Cohens_d": [],
+            "Effect": [],
+            "t_stat": [],
+            "p_value": []
+        })
+    
+    ax.set_title(f"Distribution of {drug} fold changes for {protein}")
+    ax.set_xlabel("Fold Change")
+    ax.set_ylabel("Density")
+    ax.legend(labels, loc="upper right")
+    plt.tight_layout()
+    
+    output_dir = f"data/drug_distributions"
+    if not os.path.exists(output_dir):
+        os.makedirs(output_dir)
+    output_path = os.path.join(
+        output_dir, f"{protein}"
+    )
+    
+    if sys.platform == "win32":
+        output_path = output_path.replace("|", "-")
+    if not os.path.exists(output_path):
+        os.makedirs(output_path)
+        
+    output_path = os.path.join(
+        output_path, f"{protein}_{drug}.png"
+    )
+    if sys.platform == "win32":
+        output_path = output_path.replace("|", "-")
+    fig.savefig(
+        output_path
+    )
+    plt.clf()
+    plt.close(fig)
+    
     df = pd.DataFrame(rows)
-    df = df[(df["Significant"] == True) & (df["Enough_Samples"] == True) & (df["Effect"].isin({"medium", "large"}))]
     return df
 
 
@@ -126,22 +176,10 @@ def print_summary_statistics(results: pd.DataFrame, drugs):
     print("\nAnalysis Summary:")
     print(f"Total drugs analyzed: {len(drugs)}")
 
-    significant_count = results["Significant"].sum()
-    print(
-        f"{significant_count} ({significant_count / len(results) * 100:.2f}%) of drug dosages were significant."
-    )
-
     # Effect size summary
-    effect_summary = results[results["Significant"]]["Effect"].value_counts()
+    effect_summary = results["Effect"].value_counts()
     print("\nEffect Size Distribution (Significant Results):")
     print(effect_summary)
-
-    # Sample size issues
-    insufficient_samples = results[~results["Enough_Samples"]]
-    if len(insufficient_samples) > 0:
-        print(
-            f"\nWARNING: {len(insufficient_samples)} ({len(insufficient_samples) / len(results) * 100:.2f}%) of analyzed dosages had insufficient samples."
-        )
 
 
 def main():
@@ -160,7 +198,7 @@ def main():
 
     # Get the most frequent protein
     results = []
-    most_frequent_proteins = protein_counts.index[:5]
+    most_frequent_proteins = protein_counts.index[:3]
     for most_frequent_protein in most_frequent_proteins:
         print(
             f"Analyzing protein: {most_frequent_protein} ({protein_counts.iloc[0]} occurrences)"
