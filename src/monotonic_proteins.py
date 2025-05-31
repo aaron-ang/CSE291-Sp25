@@ -2,7 +2,7 @@ import numpy as np
 import pandas as pd
 from tqdm import tqdm
 
-from src.monotonic_variants import (
+from monotonic_variants import (
     get_sorted_drug_cols,
     is_strictly_monotonic,
     same_sign_filter,
