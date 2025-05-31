@@ -1,87 +1,101 @@
-import pandas as pd
 import re
+from collections import defaultdict
 
-# Read the CSV file
-df = pd.read_csv('data/mq_variants_intensity_cleaned.csv')
+import numpy as np
+import pandas as pd
+from tqdm import tqdm
 
-# 1. Filter for rows with a single protein in 'Proteins'
-df_single = df[~df['Proteins'].str.contains(';')].copy()
 
-# 2. Identify intensity columns (they start with '_dyn_#')
-intensity_cols = [col for col in df_single.columns if col.startswith('_dyn_#')]
-
-# 3. Parse drug and concentration from the column names
+# Parse drug and concentration from the column names
 # Example: '_dyn_#AEE-788_inBT474 1000nM.Tech replicate 1 of 1'
 def parse_drug_conc(col):
-    match = re.match(r"_dyn_#([\w\-]+)(?:_in[\w\d]+)? ([\d]+nM|DMSO)", col)
-    if match:
-        drug = match.group(1)
-        conc = match.group(2)
-        return drug, conc
-    else:
-        return None, None
+    m = re.match(r"_dyn_#([\w\-]+)(?:_in[\w\d]+)? ([\d]+nM|DMSO)", col)
+    return (m.group(1), m.group(2)) if m else (None, None)
 
-# Group columns by drug
-drug_cols = {}
-for col in intensity_cols:
-    drug, conc = parse_drug_conc(col)
-    if drug:
-        if drug not in drug_cols:
-            drug_cols[drug] = []
-        drug_cols[drug].append((col, conc))
 
-# Print total number of drugs and proteins being searched
-print(f"Total number of drugs being searched: {len(drug_cols)}")
-print(f"Total number of proteins being searched: {df_single['Proteins'].nunique()}")
+def to_nm(x: str):
+    return int(x.rstrip("nM"))
+
 
 # Function to check strict monotonicity
-def is_strictly_monotonic(series):
-    if len(series) <= 1:
-        return False
-    if all(series[i] < series[i+1] for i in range(len(series)-1)):
-        return True
-    if all(series[i] > series[i+1] for i in range(len(series)-1)):
-        return True
-    return False
+def is_strictly_monotonic(arr):
+    return np.all(np.diff(arr) > 0) or np.all(np.diff(arr) < 0)
 
-# For each protein, check for strictly monotonic intensity changes across concentrations for each drug
-results = []
-for protein in df_single['Proteins'].unique():
-    prot_df = df_single[df_single['Proteins'] == protein]
+
+def same_sign_filter(intensities):
+    intensities = np.array(intensities)
+    return np.all(intensities >= 0) or np.all(intensities <= 0)
+
+
+if __name__ == "__main__":
+    # Read CSVs and filter to target proteins
+    df = pd.read_csv("data/mq_variants_intensity_cleaned.csv")
+    drug_stats = pd.read_csv("data/drug_distribution_stats.csv")
+    target_proteins = drug_stats["Protein"].unique()
+    df = df[df["Proteins"].isin(target_proteins)]
+
+    # Group columns by drug
+    intensity_cols = [col for col in df.columns if col.startswith("_dyn_#")]
+    drug_cols = defaultdict(list)
+    for col in intensity_cols:
+        drug, conc = parse_drug_conc(col)
+        if drug:
+            drug_cols[drug].append((col, conc))
+
+    # Sort drug columns by concentration
+    keep_concs = ["3nM", "300nM", "3000nM", "30000nM"]
+    drug_cols_sorted = {}
     for drug, cols in drug_cols.items():
-        # Filter columns for concentrations 3nM, 300nM, 3000nM, 30000nM
-        filtered_cols = [c for c in cols if c[1] in ['3nM', '300nM', '3000nM', '30000nM']]
-        if not filtered_cols:
-            continue
-        
-        # Sort columns by concentration
-        sorted_cols = sorted(filtered_cols, key=lambda x: float(x[1].replace('nM', '')))
-        col_names = [c[0] for c in sorted_cols]
-        concs = [c[1] for c in sorted_cols]
-        
-        # For each variant, check if intensities are strictly monotonic
-        for _, row in prot_df.iterrows():
-            intensities = row[col_names].values
-            if is_strictly_monotonic(intensities):
-                results.append({
-                    'Protein': protein,
-                    'Drug': drug,
-                    'Variant': row['Variant'],
-                    'Concentrations': concs,
-                    'Intensities': intensities.tolist()
-                })
+        filtered = [(col, conc) for col, conc in cols if conc in keep_concs]
+        drug_cols_sorted[drug] = sorted(filtered, key=lambda x: to_nm(x[1]))
 
-# Print results
-if results:
-    print(f"Total strictly monotonic variants found: {len(results)}")
-    for r in results:
-        print(f"\nProtein: {r['Protein']}, Drug: {r['Drug']}, Variant: {r['Variant']}")
-        print("Concentration -> Intensity:")
-        for c, i in zip(r['Concentrations'], r['Intensities']):
-            print(f"  {c} -> {i}")
-else:
-    print("No strictly monotonic cases found.")
+    # Initialize global statistics
+    stats = {
+        "proteins_tested": 0,
+        "drugs_tested": len(drug_cols_sorted),
+        "variants_tested": 0,
+        "strict_cases": 0,
+    }
 
-# Save results to a CSV file
-results_df = pd.DataFrame(results)
-results_df.to_csv('data/monotonic_variant_drug_combos.csv', index=False)
+    # For each protein, check for strictly monotonic intensity changes across concentrations for each drug
+    results = []
+    for protein, grp in tqdm(df.groupby("Proteins")):
+        stats["proteins_tested"] += 1
+        variants = grp["Variant"]
+        for drug, cols in drug_cols_sorted.items():
+            cols, concs = zip(*cols)
+            data = grp[list(cols)].to_numpy()
+            stats["variants_tested"] += data.shape[0]
+
+            mask = np.apply_along_axis(is_strictly_monotonic, 1, data)
+            strict_n = mask.sum()
+            stats["strict_cases"] += int(strict_n)
+
+            for var, intens in zip(variants[mask], data[mask]):
+                results.append(
+                    {
+                        "Protein": protein,
+                        "Drug": drug,
+                        "Variant": var,
+                        "Concentrations": concs,
+                        "Intensities": intens.tolist(),
+                    }
+                )
+
+    # Print summary statistics
+    print("=== Monotonic Summary ===")
+    print(f"Proteins tested: {stats['proteins_tested']}")
+    print(f"Drugs tested:    {stats['drugs_tested']}")
+    print(f"Variants tested: {stats['variants_tested']}")
+    print(f"Strictly monotonic cases: {stats['strict_cases']}")
+
+    results_df = pd.DataFrame(results)
+
+    # Filter out results where intensities change sign
+    df_len = len(results_df)
+    results_df_filtered = results_df[results_df["Intensities"].apply(same_sign_filter)]
+    df_len_filtered = len(results_df_filtered)
+    diff = df_len - df_len_filtered
+    print(f"\nFiltered out {diff} ({(diff / df_len):.2%}) results that changed sign")
+
+    results_df_filtered.to_csv("data/monotonic_variant_drug_combos.csv", index=False)
