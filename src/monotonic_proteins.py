@@ -70,5 +70,8 @@ if __name__ == "__main__":
     diff = df_len - df_len_filtered
     print(f"\nFiltered out {diff} ({(diff / df_len):.2%}) results that changed sign")
 
+    # Drop the 'Avg_Intensities' column as it's no longer needed
+    results_df_filtered = results_df_filtered.drop(columns=["Avg_Intensities"])
+
     output_path = "data/monotonic_protein_averages.csv"
     results_df_filtered.to_csv(output_path, index=False)
