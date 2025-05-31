@@ -7,6 +7,7 @@ import numpy as np
 import seaborn as sns
 import matplotlib.pyplot as plt
 from scipy import stats
+from tqdm import tqdm
 
 
 def get_drug_names(df: pd.DataFrame):
@@ -19,21 +20,33 @@ def get_drug_names(df: pd.DataFrame):
     return sorted(drugs)
 
 
-def process_protein_data(df: pd.DataFrame):
-    # Filter out peptides that are mapped to multiple proteins
+def process_protein_data(df: pd.DataFrame, min_occurrences=20):
+    # Filter peptides variants that are mapped to multiple proteins
     initial_rows = len(df)
     df_filtered = df[~df["Proteins"].str.contains(";", na=False)]
     rows_after_semicolon = len(df_filtered)
 
     filtered_rows = initial_rows - rows_after_semicolon
     print(
-        f"Filtered out {filtered_rows} ({filtered_rows / initial_rows:.2%}) "
-        f"peptides mapped to multiple proteins; {rows_after_semicolon} remain."
+        f"Filtered out {filtered_rows} ({(filtered_rows / initial_rows):.2%}) "
+        f"peptide variants mapped to multiple proteins; {rows_after_semicolon} remain."
     )
 
-    # Get most frequently occurring proteins
+    # Filter proteins with fewer than min_occurrences
     protein_counts = df_filtered["Proteins"].value_counts()
-    return df_filtered, protein_counts
+    df_filtered = df_filtered[
+        df_filtered["Proteins"].isin(
+            protein_counts[protein_counts >= min_occurrences].index
+        )
+    ]
+    filtered_rows = rows_after_semicolon - len(df_filtered)
+    print(
+        f"Filtered out {filtered_rows} ({(filtered_rows / rows_after_semicolon):.2%}) "
+        f"peptide variants mapped to proteins with fewer than {min_occurrences} occurrences; "
+        f"{len(df_filtered)} remain."
+    )
+
+    return df_filtered
 
 
 def compute_cohens_d(a: np.ndarray, b: np.ndarray):
@@ -235,18 +248,21 @@ def main():
     # Load and process data
     df = pd.read_csv(input_file_path)
     drugs = get_drug_names(df)
-    df_final, protein_counts = process_protein_data(df)
+    df_final = process_protein_data(df)
     peptide_scores = pd.read_csv(peptide_scores_path)
 
     # Analyze top proteins
     results = []
     global_stats = defaultdict(int)
-    most_frequent_proteins = protein_counts.index[:50]  # Top 50 proteins
+    unique_proteins = df_final["Proteins"].value_counts().index.tolist()
 
-    for protein in most_frequent_proteins:
-        print(f"Analyzing protein: {protein} ({protein_counts[protein]} occurrences)")
+    print(
+        f"Analyzing {len(unique_proteins)} unique proteins across {len(drugs)} drugs..."
+    )
+
+    for protein in tqdm(unique_proteins):
         protein_df = df_final[df_final["Proteins"] == protein]
-
+        tqdm.write(f"Analyzing protein: {protein} ({len(protein_df)} occurrences)")
         for drug in drugs:
             drug_fc = peptide_scores[peptide_scores["drug"] == drug]["log_fold_change"]
             result_df, stats = analyze_drug(drug, protein_df, drug_fc)
@@ -260,8 +276,6 @@ def main():
     combined_results.to_csv(results_output_path, index=False)
 
     # Print summaries
-    print(f"Total proteins analyzed: {len(most_frequent_proteins)}")
-    print(f"Total drugs analyzed per protein: {len(drugs)}")
     print_global_filter_summary(global_stats)
     print_summary_statistics(combined_results)
 
