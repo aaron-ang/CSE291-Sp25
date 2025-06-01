@@ -4,7 +4,7 @@ from tqdm import tqdm
 
 from monotonic_variants import (
     get_sorted_drug_cols,
-    is_strictly_monotonic,
+    is_approx_monotonic,
     same_sign_filter,
 )
 
@@ -32,14 +32,9 @@ if __name__ == "__main__":
 
         for drug, cols in sorted_drug_cols.items():
             cols, concs = zip(*cols)
-
             # Calculate average intensity for each concentration
-            avg_intensities = []
-            for col in cols:
-                avg_intensity = float(grp[col].mean())
-                avg_intensities.append(avg_intensity)
-
-            if is_strictly_monotonic(np.array(avg_intensities)):
+            avg_intensities = [float(grp[col].mean()) for col in cols]
+            if is_approx_monotonic(np.array(avg_intensities)):
                 stats["monotonic_protein_drug_pairs"] += 1
                 results.append(
                     {
@@ -57,7 +52,7 @@ if __name__ == "__main__":
     print("=== Protein-Level Monotonic Summary ===")
     print(f"Proteins tested: {stats['proteins_tested']}")
     print(f"Drugs tested: {stats['drugs_tested']}")
-    print(f"Strictly monotonic cases: {stats['monotonic_protein_drug_pairs']}")
+    print(f"Monotonic cases: {stats['monotonic_protein_drug_pairs']}")
 
     results_df = pd.DataFrame(results)
 

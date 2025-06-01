@@ -3,6 +3,7 @@ from collections import defaultdict
 
 import numpy as np
 import pandas as pd
+from scipy import stats
 from tqdm import tqdm
 
 
@@ -16,10 +17,9 @@ def get_sorted_drug_cols(df: pd.DataFrame):
             drug_cols[drug].append((col, conc))
 
     # Sort drug columns by concentration
-    keep_concs = ["3nM", "300nM", "3000nM", "30000nM"]
     sorted_drug_cols = {}
     for drug, cols in drug_cols.items():
-        filtered = [(col, conc) for col, conc in cols if conc in keep_concs]
+        filtered = [(col, conc) for col, conc in cols if "DMSO" not in conc]
         sorted_drug_cols[drug] = sorted(filtered, key=lambda x: to_nm(x[1]))
 
     return sorted_drug_cols
@@ -38,9 +38,12 @@ def to_nm(x: str):
     return int(x.rstrip("nM"))
 
 
-# Function to check strict monotonicity
-def is_strictly_monotonic(arr):
-    return np.all(np.diff(arr) > 0) or np.all(np.diff(arr) < 0)
+def is_approx_monotonic(arr, threshold=0.7):
+    if len(arr) <= 1:
+        return True
+    indices = np.arange(len(arr))
+    rho, _ = stats.spearmanr(indices, arr)
+    return abs(rho) >= threshold
 
 
 def same_sign_filter(intensities):
@@ -58,26 +61,26 @@ if __name__ == "__main__":
     sorted_drug_cols = get_sorted_drug_cols(df)
 
     # Initialize global statistics
-    stats = {
+    global_stats = {
         "proteins_tested": 0,
         "drugs_tested": len(sorted_drug_cols),
         "variants_tested": 0,
-        "strict_cases": 0,
+        "monotonic_cases": 0,
     }
 
-    # For each protein, check for strictly monotonic intensity changes across concentrations for each drug
+    # For each protein, check for monotonic intensity changes across concentrations for each drug
     results = []
     for protein, grp in tqdm(df.groupby("Proteins")):
-        stats["proteins_tested"] += 1
+        global_stats["proteins_tested"] += 1
         variants = grp["Variant"]
         for drug, cols in sorted_drug_cols.items():
             cols, concs = zip(*cols)
-            data = grp[list(cols)].to_numpy()
-            stats["variants_tested"] += data.shape[0]
+            data = grp[list(cols)].to_numpy()  # shape (n_variants, n_concentrations)
+            global_stats["variants_tested"] += data.shape[0]
 
-            mask = np.apply_along_axis(is_strictly_monotonic, 1, data)
-            strict_n = mask.sum()
-            stats["strict_cases"] += int(strict_n)
+            mask = np.apply_along_axis(is_approx_monotonic, 1, data)
+            monotonic_n = mask.sum()
+            global_stats["monotonic_cases"] += int(monotonic_n)
 
             for var, intens in zip(variants[mask], data[mask]):
                 results.append(
@@ -92,10 +95,10 @@ if __name__ == "__main__":
 
     # Print summary statistics
     print("=== Variant-Level Monotonic Summary ===")
-    print(f"Proteins tested: {stats['proteins_tested']}")
-    print(f"Drugs tested:    {stats['drugs_tested']}")
-    print(f"Variants tested: {stats['variants_tested']}")
-    print(f"Strictly monotonic cases: {stats['strict_cases']}")
+    print(f"Proteins tested: {global_stats['proteins_tested']}")
+    print(f"Drugs tested:    {global_stats['drugs_tested']}")
+    print(f"Variants tested: {global_stats['variants_tested']}")
+    print(f"Monotonic cases: {global_stats['monotonic_cases']}")
 
     results_df = pd.DataFrame(results)
 

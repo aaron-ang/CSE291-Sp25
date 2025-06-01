@@ -70,22 +70,27 @@ uv remove <name>
 - Creates a heatmap of top peptide modifications in response to drug treatments
 - Ranks modifications by total absolute response
 
-
 ### 7. Protein-Drug Interaction Network
 **Script:** `protein_drug_graph.ipynb`
 - Analyzes the number of drugs affecting each protein
 - Creates distribution plots showing proteins by number of drug effects
 
-
 ### 8. Variant-Level Dose Response
 **Script:** `monotonic_variants.py`
-- Identifies variants with strictly monotonic intensity changes across drug concentrations
+- Identifies variants with monotonic intensity changes across drug concentrations
 - Finds dose-response relationships at the peptide variant level
 
 ### 9. Protein-Level Dose Response
 **Script:** `monotonic_proteins.py`
 - Checks for monotonic dose-response patterns in protein average intensities
 - Identifies consistent protein responses to increasing drug concentrations
+
+### 10. Data Consolidation
+**Script**: `consolidate.py`
+- Processes protein-drug pairs to identify monotonic dose-response relationships
+- Filters pairs based on Spearman correlation strength (|ρ| ≥ 0.7) and sign consistency
+- Cross-references filtered protein-drug pairs with peptide-level monotonic data
+- Identifies peptide variants that show monotonic behavior even when their parent protein doesn't
 
 
 
@@ -111,4 +116,8 @@ graph TD
   PDG --> DPI(drug_protein_interaction_stats.csv)
   MV --> MVOUT(monotonic_variant_drug_combos.csv)
   MP --> MPOUT(monotonic_protein_averages.csv)
+  DDS --> CONS[consolidate.py]
+  MVOUT --> CONS
+  CONS --> PROTMAP(monotonic_protein_drug_mapping.csv)
+  CONS --> PEPTMAP(monotonic_peptide_drug_mapping.csv)
 ```
