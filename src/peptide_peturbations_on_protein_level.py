@@ -1,4 +1,5 @@
 import pandas as pd
+import re
 
 # Part 1: Process monotonic protein drug mapping data first (we need this list of proteins)
 print("=== Processing Monotonic Protein Drug Mapping Data ===")
@@ -31,6 +32,11 @@ filtered_pval_df = pval_df[pval_df['Variant'].isin(variant_to_protein.keys())]
 drug_filter = filtered_pval_df['condition'].str.contains('|'.join(drugs_of_interest), case=False, na=False)
 final_pval_df = filtered_pval_df[drug_filter]
 
+def extract_concentration(condition):
+    """Extract concentration in nM from condition string."""
+    match = re.search(r'(\d+)nM', condition)
+    return int(match.group(1)) if match else None
+
 def analyze_concentration(protein, drug, protein_variants, final_pval_df, concentration):
     # Filter p-value data for this drug and these variants at the specified concentration
     drug_data = final_pval_df[
@@ -56,9 +62,7 @@ def analyze_concentration(protein, drug, protein_variants, final_pval_df, concen
     
     return total_variants, significant_variants, percentage
 
-print("\n=== Analysis of Significant Perturbations at High Concentrations (p < 0.05) ===")
-print("For each protein-drug combination, showing perturbations at 3000nM and 30000nM")
-print("")
+print("\n=== Analysis of Significant Perturbations at All Concentrations (p < 0.05) ===")
 
 # Store results for summary
 results = []
@@ -75,53 +79,95 @@ for _, mono_row in filtered_monotonic_df.iterrows():
     print(f"Drug: {drug}")
     print(f"Response type: {mono_row['Sign']}")
     
-    # Analyze both concentrations
-    total_3000, sig_3000, perc_3000 = analyze_concentration(protein, drug, protein_variants, final_pval_df, 3000)
-    total_30000, sig_30000, perc_30000 = analyze_concentration(protein, drug, protein_variants, final_pval_df, 30000)
+    # Get all available concentrations for this drug
+    drug_data = final_pval_df[
+        (final_pval_df['Variant'].isin(protein_variants)) & 
+        (final_pval_df['condition'].str.contains(drug, case=False, na=False))
+    ]
+    concentrations = sorted(set(drug_data['condition'].apply(extract_concentration).dropna()))
     
-    # Store results for summary
-    results.append({
-        'protein': protein.split('|')[1],  # Extract protein name without sp| prefix
-        'drug': drug,
-        'response': mono_row['Sign'],
-        'total_3000': total_3000,
-        'sig_3000': sig_3000,
-        'perc_3000': perc_3000,
-        'total_30000': total_30000,
-        'sig_30000': sig_30000,
-        'perc_30000': perc_30000,
-        'perc_change': perc_30000 - perc_3000
-    })
+    print(f"Available concentrations: {concentrations}")
+    
+    # Analyze all concentrations
+    for concentration in concentrations:
+        total, sig, perc = analyze_concentration(protein, drug, protein_variants, final_pval_df, concentration)
+        
+        # Store results for summary
+        results.append({
+            'protein': protein.split('|')[1],  # Extract protein name without sp| prefix
+            'drug': drug,
+            'response': mono_row['Sign'],
+            'concentration': concentration,
+            'total_variants': total,
+            'sig_variants': sig,
+            'percentage': perc
+        })
 
 # Print summary table
 print("\n=== Summary of Concentration Effects ===")
-print("\nProtein-Drug Combinations (sorted by absolute change in perturbation percentage):")
-print(f"{'Protein':<10} {'Drug':<20} {'Response':<12} {'3000nM %':>8} {'30000nM %':>9} {'Change':>8}")
+print("\nProtein-Drug Combinations (sorted by protein and drug):")
+print(f"{'Protein':<10} {'Drug':<20} {'Response':<12} {'Conc.(nM)':<10} {'% Perturbed':<12}")
 print("-" * 70)
 
-# Sort results by absolute percentage change
-results.sort(key=lambda x: abs(x['perc_change']), reverse=True)
+# Sort results by protein, drug, and concentration
+results.sort(key=lambda x: (x['protein'], x['drug'], x['concentration']))
+
+# Group results by protein and drug
+current_protein = None
+current_drug = None
 
 for result in results:
+    # Print headers when protein or drug changes
+    if result['protein'] != current_protein or result['drug'] != current_drug:
+        print("-" * 70)
+        current_protein = result['protein']
+        current_drug = result['drug']
+    
     print(f"{result['protein']:<10} {result['drug']:<20} {result['response']:<12} "
-          f"{result['perc_3000']:>7.1f}% {result['perc_30000']:>8.1f}% {result['perc_change']:>7.1f}%")
+          f"{result['concentration']:<10} {result['percentage']:>8.1f}%")
 
 # Print interesting findings
 print("\nKey Findings:")
-print("1. Largest increases in perturbation from 3000nM to 30000nM:")
-increases = [r for r in results if r['perc_change'] > 0]
-for r in sorted(increases, key=lambda x: x['perc_change'], reverse=True)[:3]:
-    print(f"   - {r['protein']} with {r['drug']}: {r['perc_change']:.1f}% increase")
 
-print("\n2. Largest decreases in perturbation from 3000nM to 30000nM:")
-decreases = [r for r in results if r['perc_change'] < 0]
-for r in sorted(decreases, key=lambda x: x['perc_change'])[:3]:
-    print(f"   - {r['protein']} with {r['drug']}: {abs(r['perc_change']):.1f}% decrease")
+# 1. Find maximum perturbation for each protein-drug combo
+print("\n1. Maximum perturbation for each protein-drug combination:")
+for protein in set(r['protein'] for r in results):
+    protein_results = [r for r in results if r['protein'] == protein]
+    for drug in set(r['drug'] for r in protein_results):
+        drug_results = [r for r in protein_results if r['drug'] == drug]
+        max_result = max(drug_results, key=lambda x: x['percentage'])
+        if max_result['percentage'] > 0:
+            print(f"   - {protein} with {drug}: {max_result['percentage']:.1f}% at {max_result['concentration']}nM")
 
-print("\n3. Most stable responses (smallest absolute change):")
-stable = sorted(results, key=lambda x: abs(x['perc_change']))[:3]
-for r in stable:
-    print(f"   - {r['protein']} with {r['drug']}: {abs(r['perc_change']):.1f}% change")
+# 2. Find strongest concentration dependence
+print("\n2. Strongest concentration dependence (largest % change between min and max):")
+for protein in set(r['protein'] for r in results):
+    protein_results = [r for r in results if r['protein'] == protein]
+    for drug in set(r['drug'] for r in protein_results):
+        drug_results = [r for r in protein_results if r['drug'] == drug]
+        if len(drug_results) > 1:
+            min_perc = min(r['percentage'] for r in drug_results)
+            max_perc = max(r['percentage'] for r in drug_results)
+            change = max_perc - min_perc
+            if change > 0:
+                print(f"   - {protein} with {drug}: {change:.1f}% change "
+                      f"(from {min_perc:.1f}% to {max_perc:.1f}%)")
+
+# 3. Most stable responses across concentrations
+print("\n3. Most stable responses (smallest variation across concentrations):")
+stable_responses = []
+for protein in set(r['protein'] for r in results):
+    protein_results = [r for r in results if r['protein'] == protein]
+    for drug in set(r['drug'] for r in protein_results):
+        drug_results = [r for r in protein_results if r['drug'] == drug]
+        if len(drug_results) > 1:
+            min_perc = min(r['percentage'] for r in drug_results)
+            max_perc = max(r['percentage'] for r in drug_results)
+            change = max_perc - min_perc
+            stable_responses.append((protein, drug, change))
+
+for protein, drug, change in sorted(stable_responses, key=lambda x: x[2])[:5]:
+    print(f"   - {protein} with {drug}: {change:.1f}% variation")
 
 # Save the final filtered dataset
 final_pval_df.to_csv('data/pval_intensities_filtered_by_monotonic_drugs.csv', index=False)
