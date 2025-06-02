@@ -29,6 +29,7 @@ for (protein, drug), group in df.groupby(["Protein", "Drug"]):
             "NumConcentrations": len(means),
             "SpearmanRho": rho,
             "Sign": sign_label,
+            "concs": concs.tolist(),
         }
     )
 
