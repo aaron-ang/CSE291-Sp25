@@ -252,9 +252,7 @@ def main():
     drugs = get_drug_names(df)
     df_final = process_protein_data(df)
     peptide_scores = pd.read_csv(peptide_scores_path)
-    peptide_scores["drug"] = peptide_scores["condition"].str.extract(r"_dyn_#([^ ]+)")[
-        0
-    ]
+    peptide_scores["drug"] = peptide_scores["condition"].str.split().str[0]
 
     # Analyze top proteins
     results = []

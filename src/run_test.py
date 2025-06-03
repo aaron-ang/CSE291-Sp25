@@ -18,8 +18,10 @@ def load_and_preprocess_data(file_path):
     )
     treatment_df.sort_values(by="Unmod variant", inplace=True)
 
-    # Clena drug condition
-    treatment_df["condition"] = treatment_df["condition"].str.split(".").str[0]
+    # Clean drug condition
+    treatment_df["condition"] = (
+        treatment_df["condition"].str.split(".").str[0].str.removeprefix("_dyn_#")
+    )
 
     return treatment_df
 
@@ -118,15 +120,11 @@ def create_distribution_plot(df, stats_dict, significant_fc, alpha, output_path:
     plt.close()
 
 
-def save_results(df: pd.DataFrame, output_path):
-    df.to_csv(output_path)
-    print(f"\nFiltered data saved to {output_path}")
-
-
 def main():
     data_path_csv = "data/mq_variants_intensity_cleaned.csv"
     plot_output_path = "data/log_fc_distribution.png"
     results_output_path = "data/variant_scores.csv"
+    significant_results_output_path = "data/significant_variant_scores.csv"
     alpha = 0.01
 
     treatment_df = load_and_preprocess_data(data_path_csv)
@@ -143,7 +141,11 @@ def main():
         plot_output_path,
     )
 
-    save_results(result_df, results_output_path)
+    result_df.to_csv(results_output_path)
+
+    sig_mask = result_df["p_value"] < alpha
+    significant_results = result_df[sig_mask]
+    significant_results.to_csv(significant_results_output_path)
 
 
 if __name__ == "__main__":
