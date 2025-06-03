@@ -1,3 +1,5 @@
+import os
+
 import pandas as pd
 import re
 import matplotlib.pyplot as plt
@@ -128,6 +130,7 @@ for result in results:
           f"{result['concentration']:<10} {result['percentage']:>8.1f}%")
 
 # Create plots for each protein-drug combination
+os.makedirs('plots', exist_ok=True)
 unique_proteins = set(r['protein'] for r in results)
 unique_drugs = set(r['drug'] for r in results)
 

@@ -107,6 +107,26 @@ for (protein, drug), peptides in protein_drug_to_peptides.items():
         }
         peptide_drug_mapping.append(mapping_row)
 
-# Save detailed peptide mapping for filtered pairs
+
 peptide_mapping_df = pd.DataFrame(peptide_drug_mapping)
+
+significant_variant_df = pd.read_csv("data/significant_variant_scores.csv")
+significant_variant_df[["Drug", "Concentration"]] = significant_variant_df[
+    "condition"
+].str.split(expand=True)
+
+
+merged = significant_variant_df.merge(peptide_mapping_df, on=["Variant", "Drug"])
+
+cols = [
+    "Variant",
+    "Unmod variant",
+    "Drug",
+    "Concentration",
+    "log_fold_change",
+    "z_score",
+    "p_value",
+]
+peptide_mapping_df = merged[cols].sort_values(["Variant", "Drug", "p_value"])
+
 peptide_mapping_df.to_csv("data/monotonic_peptide_drug_mapping.csv", index=False)
