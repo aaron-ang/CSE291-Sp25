@@ -27,7 +27,7 @@ final_filtered_df = single_protein_variants_df[
 variant_to_protein = dict(zip(final_filtered_df['Variant'], final_filtered_df['Proteins']))
 
 # Part 3: Process p-value intensities data
-pval_df = pd.read_csv('data/pval_intensities.csv')
+pval_df = pd.read_csv('data/variant_scores.csv')
 filtered_pval_df = pval_df[pval_df['Variant'].isin(variant_to_protein.keys())]
 drug_filter = filtered_pval_df['condition'].str.contains('|'.join(drugs_of_interest), case=False, na=False)
 final_pval_df = filtered_pval_df[drug_filter]
@@ -58,7 +58,7 @@ def analyze_concentration(protein, drug, protein_variants, final_pval_df, concen
         print("\nSignificantly perturbed variants:")
         significant_data = drug_data[drug_data['p_value'] < 0.05].sort_values('p_value')
         for _, row in significant_data.iterrows():
-            print(f"- {row['Variant']}: p-value = {row['p_value']:.6f}, intensity = {row['intensity']:.6f}")
+            print(f"- {row['Variant']}: p-value = {row['p_value']:.6f}, intensity = {row['log_fold_change']:.6f}")
     
     return total_variants, significant_variants, percentage
 

@@ -14,12 +14,12 @@ def load_and_preprocess_data(file_path):
         treatment_cols
     ].stack()
     treatment_df = treatment_series.reset_index(level=2, name="log_fold_change").rename(
-        columns={"level_2": "drug"}
+        columns={"level_2": "condition"}
     )
     treatment_df.sort_values(by="Unmod variant", inplace=True)
 
-    # Remove concentration from drug names
-    treatment_df["drug"] = treatment_df["drug"].str.split().str[0].str.split("#").str[1]
+    # Clena drug condition
+    treatment_df["condition"] = treatment_df["condition"].str.split(".").str[0]
 
     return treatment_df
 

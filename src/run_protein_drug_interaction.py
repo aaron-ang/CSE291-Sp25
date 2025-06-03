@@ -1,4 +1,5 @@
 import os
+import re
 from collections import defaultdict
 from pathlib import Path
 
@@ -75,9 +76,10 @@ def get_drug_columns(protein_df: pd.DataFrame, drug: str):
     return sorted(drug_cols, key=extract_concentration)
 
 
-def extract_concentration(col: str):
-    """Extract numeric concentration from column name."""
-    return int(col.split()[1].split("nM")[0])
+def extract_concentration(condition):
+    """Extract concentration in nM from condition string."""
+    match = re.search(r"(\d+)nM", condition)
+    return int(match.group(1))
 
 
 def create_safe_path(base_path: str, filename: str):
@@ -250,6 +252,9 @@ def main():
     drugs = get_drug_names(df)
     df_final = process_protein_data(df)
     peptide_scores = pd.read_csv(peptide_scores_path)
+    peptide_scores["drug"] = peptide_scores["condition"].str.extract(r"_dyn_#([^ ]+)")[
+        0
+    ]
 
     # Analyze top proteins
     results = []
