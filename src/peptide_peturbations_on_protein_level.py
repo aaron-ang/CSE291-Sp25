@@ -1,5 +1,6 @@
 import pandas as pd
 import re
+import matplotlib.pyplot as plt
 
 # Part 1: Process monotonic protein drug mapping data first (we need this list of proteins)
 print("=== Processing Monotonic Protein Drug Mapping Data ===")
@@ -46,23 +47,23 @@ def analyze_concentration(protein, drug, protein_variants, final_pval_df, concen
     ]
     
     total_variants = len(drug_data)
-    significant_variants = len(drug_data[drug_data['p_value'] < 0.05])
+    significant_variants = len(drug_data[drug_data['p_value'] < 0.01])
     percentage = (significant_variants / total_variants * 100) if total_variants > 0 else 0
     
     print(f"\n{concentration}nM concentration:")
     print(f"Total variants measured: {total_variants}")
-    print(f"Significantly perturbed variants (p < 0.05): {significant_variants}")
+    print(f"Significantly perturbed variants (p < 0.01): {significant_variants}")
     print(f"Percentage significantly perturbed: {percentage:.2f}%")
     
     if significant_variants > 0:
         print("\nSignificantly perturbed variants:")
-        significant_data = drug_data[drug_data['p_value'] < 0.05].sort_values('p_value')
+        significant_data = drug_data[drug_data['p_value'] < 0.01].sort_values('p_value')
         for _, row in significant_data.iterrows():
             print(f"- {row['Variant']}: p-value = {row['p_value']:.6f}, intensity = {row['log_fold_change']:.6f}")
     
     return total_variants, significant_variants, percentage
 
-print("\n=== Analysis of Significant Perturbations at All Concentrations (p < 0.05) ===")
+print("\n=== Analysis of Significant Perturbations at All Concentrations (p < 0.01) ===")
 
 # Store results for summary
 results = []
@@ -125,6 +126,48 @@ for result in results:
     
     print(f"{result['protein']:<10} {result['drug']:<20} {result['response']:<12} "
           f"{result['concentration']:<10} {result['percentage']:>8.1f}%")
+
+# Create plots for each protein-drug combination
+unique_proteins = set(r['protein'] for r in results)
+unique_drugs = set(r['drug'] for r in results)
+
+for protein in unique_proteins:
+    protein_results = [r for r in results if r['protein'] == protein]
+    for drug in unique_drugs:
+        drug_results = [r for r in protein_results if r['drug'] == drug]
+        if drug_results:  # Only create plot if we have data for this combination
+            # Sort by concentration
+            drug_results.sort(key=lambda x: x['concentration'])
+            
+            # Create the plot
+            plt.figure(figsize=(8, 6))
+            plt.plot(
+                [r['concentration'] for r in drug_results],
+                [r['percentage'] for r in drug_results],
+                'o-',  # Line with dots
+                linewidth=2,
+                markersize=8
+            )
+            
+            # Add labels and title
+            plt.xlabel('Concentration (nM)')
+            plt.ylabel('Perturbed Peptides (%)')
+            plt.title(f'{protein} response to {drug}')
+            
+            # Add grid
+            plt.grid(True, linestyle='--', alpha=0.7)
+            
+            # Use log scale for x-axis since concentrations vary by orders of magnitude
+            plt.xscale('log')
+            
+            # Set y-axis limits from 0 to max percentage + some padding
+            plt.ylim(0, max(r['percentage'] for r in drug_results) * 1.1)
+            
+            # Save the plot
+            plt.savefig(f'plots/{protein}_{drug}_perturbation.png', bbox_inches='tight', dpi=300)
+            plt.close()
+
+print("\nPlots have been saved in the 'plots' directory.")
 
 # Print interesting findings
 print("\nKey Findings:")
