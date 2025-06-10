@@ -143,31 +143,91 @@ for protein in unique_proteins:
             drug_results.sort(key=lambda x: x['concentration'])
             
             # Create the plot
-            plt.figure(figsize=(8, 6))
-            plt.plot(
-                [r['concentration'] for r in drug_results],
-                [r['percentage'] for r in drug_results],
-                'o-',  # Line with dots
-                linewidth=2,
-                markersize=8
-            )
+            plt.figure(figsize=(12, 8))  # Made figure larger to accommodate labels
             
-            # Add labels and title
-            plt.xlabel('Concentration (nM)')
-            plt.ylabel('Perturbed Peptides (%)')
-            plt.title(f'{protein} response to {drug}')
+            # Filter concentrations with at least 10 peptides
+            valid_concentrations = []
+            valid_percentages = []
+            valid_variants = []
             
-            # Add grid
-            plt.grid(True, linestyle='--', alpha=0.7)
+            for concentration in concentrations:
+                # Get all peptides measured at this concentration
+                drug_data = final_pval_df[
+                    (final_pval_df['Variant'].isin(protein_variants)) & 
+                    (final_pval_df['condition'].str.contains(drug, case=False, na=False)) &
+                    (final_pval_df['condition'].str.contains(f'{concentration}nM', case=False, na=False))
+                ]
+                
+                # Only include if we have at least 10 peptides
+                if len(drug_data) >= 10:
+                    # Calculate percentage directly from the data
+                    sig_drug_data = drug_data[drug_data['p_value'] < 0.01]
+                    percentage = (len(sig_drug_data) / len(drug_data)) * 100
+                    
+                    valid_concentrations.append(concentration)
+                    valid_percentages.append(percentage)
+                    valid_variants.append(sig_drug_data)  # Store only significant variants
             
-            # Use log scale for x-axis since concentrations vary by orders of magnitude
-            plt.xscale('log')
-            
-            # Set y-axis limits from 0 to max percentage + some padding
-            plt.ylim(0, max(r['percentage'] for r in drug_results) * 1.1)
-            
-            # Save the plot
-            plt.savefig(f'plots/{protein}_{drug}_perturbation.png', bbox_inches='tight', dpi=300)
+            # Only plot if we have valid concentrations
+            if valid_concentrations:
+                plt.plot(
+                    valid_concentrations,
+                    valid_percentages,
+                    'o-',  # Line with dots
+                    linewidth=2,
+                    markersize=8
+                )
+                
+                # Add labels and title
+                plt.xlabel('Concentration (nM)')
+                plt.ylabel('Perturbed Peptides (%)')
+                plt.title(f'{protein} response to {drug}')
+                
+                # Add grid
+                plt.grid(True, linestyle='--', alpha=0.7)
+                
+                # Use log scale for x-axis since concentrations vary by orders of magnitude
+                plt.xscale('log')
+                
+                # Set y-axis limits from 0 to max percentage + some padding
+                plt.ylim(0, max(valid_percentages) * 1.1)
+                
+                # Add peptide labels for each concentration
+                for i, (concentration, y_val, sig_drug_data) in enumerate(zip(valid_concentrations, valid_percentages, valid_variants)):
+                    # Only add labels if there are perturbations (y_val > 0)
+                    if y_val > 0 and not sig_drug_data.empty:
+                        # Create label text with peptide names
+                        peptide_labels = [f"{row['Variant']} (p={row['p_value']:.2e})" 
+                                        for _, row in sig_drug_data.iterrows()]
+                        
+                        # Calculate vertical spacing for labels
+                        vertical_spacing = 10.0  # Increased spacing between labels
+                        total_height = len(peptide_labels) * vertical_spacing
+                        
+                        # Start position for the first label
+                        start_y = y_val + (total_height / 2)
+                        
+                        for j, label in enumerate(peptide_labels):
+                            # Calculate vertical position for this label
+                            label_y = start_y - (j * vertical_spacing)
+                            
+                            # Add text annotation
+                            plt.annotate(label,
+                                       xy=(concentration, y_val),
+                                       xytext=(10, label_y - y_val),  # Offset from data point
+                                       textcoords='offset points',
+                                       ha='left',
+                                       va='center',
+                                       fontsize=8,
+                                       bbox=dict(boxstyle='round,pad=0.5',
+                                               fc='yellow',
+                                               alpha=0.3))
+                
+                # Adjust layout to prevent label cutoff
+                plt.tight_layout()
+                
+                # Save the plot
+                plt.savefig(f'plots/{protein}_{drug}_perturbation.png', bbox_inches='tight', dpi=300)
             plt.close()
 
 print("\nPlots have been saved in the 'plots' directory.")
