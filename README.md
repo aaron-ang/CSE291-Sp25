@@ -75,22 +75,25 @@ uv remove <name>
 - Analyzes the number of drugs affecting each protein
 - Creates distribution plots showing proteins by number of drug effects
 
-### 8. Variant-Level Dose Response
-**Script:** `monotonic_variants.py`
-- Identifies variants with monotonic intensity changes across drug concentrations
-- Finds dose-response relationships at the peptide variant level
-
-### 9. Protein-Level Dose Response
-**Script:** `monotonic_proteins.py`
-- Checks for monotonic dose-response patterns in protein average intensities
-- Identifies consistent protein responses to increasing drug concentrations
-
-### 10. Data Consolidation
+### 8. Data Consolidation
 **Script**: `consolidate.py`
 - Processes protein-drug pairs to identify monotonic dose-response relationships
 - Filters pairs based on Spearman correlation strength (|ρ| ≥ 0.7) and sign consistency
 - Cross-references filtered protein-drug pairs with peptide-level monotonic data
 - Identifies peptide variants that show monotonic behavior even when their parent protein doesn't
+
+### 9. Protein-Effect Analysis
+**Script**: `peptide_perturbations_on_protein_level.py`
+- Analyzes how peptide variants contribute to protein-level drug responses
+- Calculates percentage of significantly perturbed variants (p < 0.01) for each protein-drug-concentration combination
+- Generates concentration-response plots with annotated significant peptide variants
+- Identifies maximum perturbation for each protein-drug pair
+- Highlights proteins with strongest concentration dependence and most stable responses
+
+### 10. Outlier Detection
+**Script**: `find_outlier.ipynb`
+- Analyzes drug differential abundances for protein `sp|Q8TD19|NEK9_HUMAN` and drug `Alectinib`
+- Concluded that the concentration of 300nM causing an activating effect is not an outlier, given that the majority of mapped peptides show a similar response.
 
 
 
@@ -106,18 +109,15 @@ graph TD
   VS --> PDIA[run_protein_drug_interaction.py]
   VS --> PDG[protein_drug_graph.ipynb]
   PDIA --> DDS(drug_distribution_stats.csv)
-  DDS --> MV[monotonic_variants.py]
-  DDS --> MP[monotonic_proteins.py]
   CLEAN --> PPD[protein_peptide_dictionary.ipynb]
   PPD --> P2P(protein_to_peptides.csv)
   PPD --> P10(protein_with_10+_peptides.csv)
   CLEAN --> MOD[modification_level.ipynb]
   MOD --> HM(heatmap_data.csv)
   PDG --> DPI(drug_protein_interaction_stats.csv)
-  MV --> MVOUT(monotonic_variant_drug_combos.csv)
-  MP --> MPOUT(monotonic_protein_averages.csv)
   DDS --> CONS[consolidate.py]
-  MVOUT --> CONS
   CONS --> PROTMAP(monotonic_protein_drug_mapping.csv)
   CONS --> PEPTMAP(monotonic_peptide_drug_mapping.csv)
+  PROTMAP --> PEPTPERT[peptide_perturbations_on_protein_level.py]
+  PEPTPERT --> PVAL(pval_intensities_filtered_by_monotonic_drugs.csv)
 ```

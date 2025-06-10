@@ -168,8 +168,8 @@ def analyze_single_concentration(
         return None, "small_effect"
 
     # Statistical test
-    t_stat, p_val = stats.ttest_ind(vals, drug_fc, equal_var=False)
-    if np.isnan(p_val) or np.isnan(t_stat):
+    u_stat, p_val = stats.mannwhitneyu(vals, drug_fc)
+    if np.isnan(p_val) or np.isnan(u_stat):
         print(f"WARNING: NaN stats for {drug}@{drug_conc}nM.")
         return None, "nan_stats"
 
@@ -186,7 +186,7 @@ def analyze_single_concentration(
         "Std": vals.std(ddof=1),
         "Cohens_d": d,
         "Effect": effect,
-        "t_stat": t_stat,
+        "u_stat": u_stat,
         "p_value": p_val,
         "values": vals,  # For plotting
     }
